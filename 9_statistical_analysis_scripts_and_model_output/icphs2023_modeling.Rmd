@@ -1019,14 +1019,72 @@ Compute posterior probability of all predictors.
 
 ```{r env dec posterior probabilities, echo=TRUE, warning=FALSE}
 posteriors_mdl_env_dec <- posterior_samples(envpeak_dec)
-sum(posteriors_mdl_env_dec$b_speech_rate_s < 0) / nrow(posteriors_mdl_env_dec) # 0.9429062 -- almost!
-sum(posteriors_mdl_env_dec$b_point_direct_s < 0) / nrow(posteriors_mdl_env_dec) # 0.9415938 -- almost!
-sum(posteriors_mdl_env_dec$b_wrist_decpeak < 0) / nrow(posteriors_mdl_env_dec) # 0.9900625
-sum(posteriors_mdl_env_dec$b_sex_s > 0) / nrow(posteriors_mdl_env_dec) # 0.790375
-sum(posteriors_mdl_env_dec[,6] < 0) / nrow(posteriors_mdl_env_dec) # interaction 0.68525
+sum(posteriors_mdl_env_dec$b_speech_rate_s < 0) / nrow(posteriors_mdl_env_dec) # 0.973875
+sum(posteriors_mdl_env_dec$b_point_direct_s < 0) / nrow(posteriors_mdl_env_dec) #  0.5802812
+sum(posteriors_mdl_env_dec$b_wrist_decpeak < 0) / nrow(posteriors_mdl_env_dec) # 0.9994375
+sum(posteriors_mdl_env_dec$b_sex_s > 0) / nrow(posteriors_mdl_env_dec) # 0.8771875
+sum(posteriors_mdl_env_dec[,6] < 0) / nrow(posteriors_mdl_env_dec) # interaction 0.6679375
+
+```
+Compare acceleration and deceleration values
+
+```{r}
+
+peak_summary <- function(df, var, name) {
+  x <- df[[var]]
+  data.frame(dataset = name, peak = var,
+             n = sum(!is.na(x)),
+             mean = mean(x, na.rm = TRUE),
+             mean_abs = mean(abs(x), na.rm = TRUE),
+             sd = sd(x, na.rm = TRUE),
+             median_abs = median(abs(x), na.rm = TRUE))
+}
+
+peaks <- rbind(
+  peak_summary(f0_acc,  "wrist_apeak",   "f0_acc"),
+  peak_summary(env_acc, "wrist_apeak",   "env_acc"),
+  peak_summary(f0_dec,  "wrist_decpeak", "f0_dec"),
+  peak_summary(env_dec, "wrist_decpeak", "env_dec")
+)
+peaks[, 3:7] <- round(peaks[, 3:7], 2)
+peaks
 
 ```
 
+Compare the two deceleration models
 
+```{r dec comparison, echo=TRUE, warning=FALSE}
 
+# exact estimates, no rounding
+fixef(f0peak_dec)["wrist_decpeak", ]
+fixef(envpeak_dec)["wrist_decpeak", ]
 
+dr_f0  <- as_draws_df(f0peak_dec)
+dr_env <- as_draws_df(envpeak_dec)
+b_f0   <- -dr_f0$b_wrist_decpeak    # minus: positive = stronger deceleration -> higher outcome
+b_env  <- -dr_env$b_wrist_decpeak
+
+summ <- function(x) round(c(mean = mean(x), quantile(x, c(.025, .975))), 3)
+
+# 1. certainty: how many posterior SDs from zero (unit-free)
+c(f0 = mean(b_f0) / sd(b_f0), env = mean(b_env) / sd(b_env))
+
+# 2. size: % change of the outcome per 1 cm/s^2 stronger deceleration
+rel_f0  <- b_f0  / mean(f0peak_dec$data$wrist_f0peak_dec)        * 100
+rel_env <- b_env / mean(envpeak_dec$data$wrist_envpeak_dec_norm) * 100
+rbind(f0 = summ(rel_f0), env = summ(rel_env))
+
+# 3. size: per 1 SD of deceleration, in residual SDs of the outcome
+std_f0  <- b_f0  * sd(f0peak_dec$data$wrist_decpeak)  / dr_f0$sigma
+std_env <- b_env * sd(envpeak_dec$data$wrist_decpeak) / dr_env$sigma
+rbind(f0 = summ(std_f0), env = summ(std_env))
+
+# difference envelope - F0 and Pr(envelope effect > F0 effect)
+set.seed(123)
+n <- min(length(b_f0), length(b_env))
+d_rel <- rel_env[1:n] - sample(rel_f0, n)
+d_std <- std_env[1:n] - sample(std_f0, n)
+rbind(rel = summ(d_rel), std = summ(d_std))
+c(P_rel = mean(d_rel > 0), P_std = mean(d_std > 0))
+
+```
