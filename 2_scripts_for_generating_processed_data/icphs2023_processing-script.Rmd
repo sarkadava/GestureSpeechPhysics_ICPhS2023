@@ -228,6 +228,12 @@ load.in.anno_num <- function(time_original, anno)
 
 ########################## gesture phases function ##############################################
 
+########################## Corrigendum note ####################################################
+
+# Here we corrected the function for detecting phases. Previously, it incorrectly assigned gesture phase, as the
+# number increased after every detected peak, even if the direction of the movement didn't change. We corrected it
+# such that it only assigns new gesture phase number if also the direction of the movement changed
+
 ## this function automatically detect phases in gesture movement
 
 getphases.it <- function(time, mvmnt, syll) {

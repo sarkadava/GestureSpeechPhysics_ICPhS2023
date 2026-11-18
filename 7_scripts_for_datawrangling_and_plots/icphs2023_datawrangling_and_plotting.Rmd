@@ -105,48 +105,62 @@ write.csv(df_f0dec_sync_w, paste0(datasets, "dataset_f0_dec.csv"), row.names = F
 
 We detect outliers using function outlierKD that removes them by Tukey rules on quartiles +/- 1.5 IQR. This code should be run in the console, because the function prompts the user to answer whether they wish to remove the outliers or not.
 
-```{r outliers and synchrony annotation, include=FALSE, echo=FALSE, message=FALSE, warning = FALSE}
+```{r outliers and synchrony annotation, include=TRUE, echo=TRUE, message=FALSE, warning = FALSE}
 
-#Function
-#source("http://goo.gl/UUyEzD")
+#Function adapted from: http://goo.gl/UUyEzD
 # in the form of outlierKD(f0_dec, wrist_f0peak_dec)
-outlierKD <- function(dt, var) {
-     var_name <- eval(substitute(var),eval(dt))
-     na1 <- sum(is.na(var_name))
-     m1 <- mean(var_name, na.rm = T)
-     par(mfrow=c(2, 2), oma=c(0,0,3,0))
-     boxplot(var_name, main="With outliers")
-     hist(var_name, main="With outliers", xlab=NA, ylab=NA)
-     outlier <- boxplot.stats(var_name)$out
-     mo <- mean(outlier)
-     var_name <- ifelse(var_name %in% outlier, NA, var_name)
-     boxplot(var_name, main="Without outliers")
-     hist(var_name, main="Without outliers", xlab=NA, ylab=NA)
-     title("Outlier Check", outer=TRUE)
-     na2 <- sum(is.na(var_name))
-     cat("Outliers identified:", na2 - na1, "n")
-     cat("Propotion (%) of outliers:", round((na2 - na1) / sum(!is.na(var_name))*100, 1), "n")
-     cat("Mean of the outliers:", round(mo, 2), "n")
-     m2 <- mean(var_name, na.rm = T)
-     cat("Mean without removing outliers:", round(m1, 2), "n")
-     cat("Mean if we remove outliers:", round(m2, 2), "n")
-     response <- readline(prompt="Do you want to remove outliers and to replace with NA? [yes/no]: ")
-     if(response == "y" | response == "yes"){
-          dt[as.character(substitute(var))] <- invisible(var_name)
-          assign(as.character(as.list(match.call())$dt), dt, envir = .GlobalEnv)
-          cat("Outliers successfully removed", "n")
-          return(invisible(dt))
-     } else{
-          cat("Nothing changed", "n")
-          return(invisible(var_name))
-     }
+
+outlierKD <- function(dt, var, group = NULL, plot = TRUE, verbose = TRUE) {
+  var_chr <- deparse(substitute(var))
+  x <- dt[[var_chr]]
+
+  na1     <- sum(is.na(x))
+  n_valid <- sum(!is.na(x))
+  m1      <- mean(x, na.rm = TRUE)
+
+  # flag boxplot outliers (1.5 * IQR rule), optionally within groups
+  flag_out <- function(v) {
+    out <- boxplot.stats(v)$out
+    !is.na(v) & v %in% out
+  }
+  if (is.null(group)) {
+    is_out <- flag_out(x)
+  } else {
+    is_out <- as.logical(ave(x, dt[[group]], FUN = flag_out))
+  }
+
+  x_clean <- x
+  x_clean[is_out] <- NA
+
+  if (plot) {
+    op <- par(mfrow = c(2, 2), oma = c(0, 0, 3, 0))
+    on.exit(par(op))
+    boxplot(x, main = "With outliers")
+    hist(x, main = "With outliers", xlab = NA, ylab = NA)
+    boxplot(x_clean, main = "Without outliers")
+    hist(x_clean, main = "Without outliers", xlab = NA, ylab = NA)
+    title(paste("Outlier check:", var_chr), outer = TRUE)
+  }
+
+  if (verbose) {
+    n_out <- sum(is_out)
+    cat("Variable:", var_chr, if (!is.null(group)) paste0("(within ", group, ")"), "\n")
+    cat("Outliers identified:", n_out, "\n")
+    cat("Proportion (%) of outliers:", round(n_out / n_valid * 100, 1), "\n")
+    cat("Mean of the outliers:", if (n_out > 0) round(mean(x[is_out]), 2) else NA, "\n")
+    cat("Mean with outliers:", round(m1, 2), "\n")
+    cat("Mean without outliers:", round(mean(x_clean, na.rm = TRUE), 2), "\n")
+  }
+
+  dt[[var_chr]] <- x_clean
+  invisible(dt)
 }
 
 # We remove outliers for each dataset and both two variables under study
 
 ## ENV-ACC
 
-outlierKD(df_envacc_sync_w, wrist_envpeak_acc)
+df_envacc_sync_w <- outlierKD(df_envacc_sync_w, wrist_envpeak_acc)
 #Outliers identified: 102 
 #Propotion (%) of outliers: 4.3
 #Mean of the outliers: 0.33 
@@ -154,61 +168,65 @@ outlierKD(df_envacc_sync_w, wrist_envpeak_acc)
 #Mean if we remove outliers: 0.11 
 
 
-outlierKD(df_envacc_sync_w, wrist_apeak)
-# Outliers identified: 102 from 2523 observations
-# Proportion (%) of outliers: 4.04280618311534
-# Mean of the outliers: 0.00341494510039303
-# Mean without removing outliers: 0.000397982711192951
-# Mean if we remove outliers: 0.000270874010780556
+df_envacc_sync_w <- outlierKD(df_envacc_sync_w, wrist_apeak)
+#Outliers identified: 100 
+#Propotion (%) of outliers: 4.3 
+#Mean of the outliers: 0 
+#Mean without removing outliers: 0 
+#Mean if we remove outliers: 0 
+
 
 ## F0-ACC
 
-outlierKD(df_f0acc_sync_w, wrist_f0peak_acc)
-# Outliers identified: 33 from 3716 observations
-# Proportion (%) of outliers: 0.88805166846071
-# Mean of the outliers: 396.42739313299
-# Mean without removing outliers: 214.004514261006
-# Mean if we remove outliers: 212.369989416375
+df_f0acc_sync_w <- outlierKD(df_f0acc_sync_w, wrist_f0peak_acc)
+#Outliers identified: 36 
+#Propotion (%) of outliers: 1 
+#Mean of the outliers: 394.95 
+#Mean without removing outliers: 213.63 
+#Mean if we remove outliers: 211.79 
 
-outlierKD(df_f0acc_sync_w, wrist_apeak)
-# Outliers identified: 180 from 3716 observations
-# Proportion (%) of outliers: 4.84391819160388
-# Mean of the outliers: 0.00383593424887135
-# Mean without removing outliers: 0.000433160745562418
-# Mean if we remove outliers: 0.000259942637362302
+df_f0acc_sync_w <- outlierKD(df_f0acc_sync_w, wrist_apeak)
+#Outliers identified: 170 
+#Propotion (%) of outliers: 5 
+#Mean of the outliers: 0 
+#Mean without removing outliers: 0 
+#Mean if we remove outliers: 0 
+
 
 ## ENV-DEC
 
-outlierKD(df_envdec_sync_w, wrist_envpeak_dec)
-# Outliers identified: 53 from 2020 observations
-# Proportion (%) of outliers: 2.62376237623762
-# Mean of the outliers: 0.325935734950095
-# Mean without removing outliers: 0.113624100107377
-# Mean if we remove outliers: 0.107903451075011
+df_envdec_sync_w <- outlierKD(df_envdec_sync_w, wrist_envpeak_dec)
+#Outliers identified: 55 
+#Propotion (%) of outliers: 2.9 
+#Mean of the outliers: 0.33 
+#Mean without removing outliers: 0.11 
+#Mean if we remove outliers: 0.11 
 
-outlierKD(df_envdec_sync_w, wrist_decpeak)
-# Outliers identified: 86 from 2020 observations
-# Proportion (%) of outliers: 4.25742574257426
-# Mean of the outliers: -0.00433907989590748
-# Mean without removing outliers: -0.000517174486955191
-# Mean if we remove outliers: -0.000347224194726703
 
+df_envdec_sync_w <- outlierKD(df_envdec_sync_w, wrist_decpeak)
+#Outliers identified: 82 
+#Propotion (%) of outliers: 4.4 
+#Mean of the outliers: 0 
+#Mean without removing outliers: 0 
+#Mean if we remove outliers: 0 
 
 ## F0-DEC
 
-outlierKD(df_f0dec_sync_w, wrist_f0peak_dec)
-# Outliers identified: 10 from 3694 observations
-# Proportion (%) of outliers: 0.270709258256632
-# Mean of the outliers: 382.472775268555
-# Mean without removing outliers: 209.680863791953
-# Mean if we remove outliers: 209.211830373178
+df_f0dec_sync_w <- outlierKD(df_f0dec_sync_w, wrist_f0peak_dec)
+#Outliers identified: 10 
+#Propotion (%) of outliers: 0.3 
+#Mean of the outliers: 378.64 
+#Mean without removing outliers: 208.98 
+#Mean if we remove outliers: 208.5 n
 
-outlierKD(df_f0dec_sync_w, wrist_decpeak)
-# Outliers identified: 187 from 3694 observations
-# Proportion (%) of outliers: 5.06226312939903
-# Mean of the outliers: -0.0038963242410942
-# Mean without removing outliers: -0.000519162602943341
-# Mean if we remove outliers: -0.000339085834670113
+
+df_f0dec_sync_w <- outlierKD(df_f0dec_sync_w, wrist_decpeak)
+#Outliers identified: 181 
+#Propotion (%) of outliers: 5.3 
+#Mean of the outliers: 0 
+#Mean without removing outliers: 0 
+#Mean if we remove outliers: 0 n
+
 
 
 ```
@@ -272,6 +290,7 @@ plot_envacc_w_dir <- plot_envacc_w + facet_wrap(~point_direct, ncol=2)
 ## coloured by speech rate
 plot_envacc_w_rate <- plot_envacc_w + facet_wrap(~sp_rate, ncol=2)
 
+plot_envacc_w_dir
 ```
 
 Acceleration-f0
@@ -296,11 +315,12 @@ plot_f0acc_w_dir <- plot_f0acc_w + facet_wrap(~point_direct, ncol=2)
 ## coloured by speech rate
 plot_f0acc_w_rate <- plot_f0acc_w + facet_wrap(~sp_rate, ncol=2)
 
+plot_f0acc_w_dir
 ```
 
 2. Kinematic peak: deceleration
 
-Deceleration-envelope - **This plot we used in the paper**
+Deceleration-envelope - **This plot we used in the original paper**
 ```{r wrist dec-env plot, echo=TRUE, message=FALSE, warning = FALSE}
 
 # let's get a normalized amplitude envelope values
@@ -340,7 +360,7 @@ plot_decenv_w_dir <- plot_decenv_w + facet_wrap(~point_direct, ncol=2) # per mov
 ggsave(file.path(plots, "decenv_plot.png"), dpi = 300)
 ggsave(file.path(plots, "decenv_plot.jpg"), dpi = 300)
 
-
+plot_decenv_w_dir
 ```
 
 Deceleration-f0
@@ -362,8 +382,104 @@ plot_decf0_w_rhyme <- plot_decf0_w + facet_wrap(~rhyme, ncol=6) # per rhyme
 plot_decf0_w_dir <- plot_decf0_w + facet_wrap(~point_direct, ncol=2) # per pointing direction
 plot_decf0_w_rate <- plot_decf0_w + facet_wrap(~sp_rate, ncol=2) # per speech rate
 
+plot_decf0_w_dir
 ```
 
+Here are all four relations in one plot 
+
+```{r kinematics grid plot, echo=TRUE, message=FALSE, warning=FALSE}
+
+# helper: publication-style plot (as in dec-env), without facetting
+pub_plot <- function(data, x, y, xlab, ylab, reverse_x = FALSE, ylims = NULL) {
+  p <- ggplot(data, aes(x = {{ x }} * 100 * 200, y = {{ y }})) +
+    geom_point(size = 0.5, alpha = 0.5, color = "black") +
+    geom_smooth(method = loess, formula = y ~ x, color = "black", linetype = "dashed",
+                linewidth = 0.4, fill = "gray", alpha = 0.5) +
+    geom_smooth(method = lm, formula = y ~ x, color = "red", linewidth = 1, fill = "red") +
+    labs(x = xlab, y = ylab) +
+    theme_cowplot(12) +
+    theme(title = element_text(size = 10), text = element_text(family = "times"))
+  if (reverse_x)        p <- p + scale_x_reverse(labels = abs)
+  if (!is.null(ylims))  p <- p + ylim(ylims)
+  p
+}
+
+# normalize f0 per speaker, same way as the envelope (see note below)
+df_f0acc_sync_w$wrist_f0peak_acc_norm <- ave(df_f0acc_sync_w$wrist_f0peak_acc, df_f0acc_sync_w$speaker,
+                                             FUN = function(x) scale(x, center = FALSE, scale = TRUE))
+df_f0dec_sync_w$wrist_f0peak_dec_norm <- ave(df_f0dec_sync_w$wrist_f0peak_dec, df_f0dec_sync_w$speaker,
+                                             FUN = function(x) scale(x, center = FALSE, scale = TRUE))
+
+# the four panels
+p_accenv <- pub_plot(df_envacc_sync_w, wrist_apeak, wrist_envpeak_acc_norm,
+                     "Acceleration peak, wrist (cm/s^2)", "Amplitude envelope peak (normalized)",
+                     ylims = c(0.25, 1.5))
+
+p_accf0  <- pub_plot(df_f0acc_sync_w, wrist_apeak, wrist_f0peak_acc_norm,
+                     "Acceleration peak, wrist (cm/s^2)", "F0 peak (normalized)")
+
+p_decenv <- pub_plot(df_envdec_sync_w, wrist_decpeak, wrist_envpeak_dec_norm,
+                     "Deceleration peak, wrist (cm/s^2)", "Amplitude envelope peak (normalized)",
+                     reverse_x = TRUE, ylims = c(0.25, 1.5))
+
+p_decf0  <- pub_plot(df_f0dec_sync_w, wrist_decpeak, wrist_f0peak_dec_norm,
+                     "Deceleration peak, wrist (cm/s^2)", "F0 peak (normalized)",
+                     reverse_x = TRUE)
+
+# 2x2 grid with shared y-axis label per column
+
+no_y <- theme(axis.title.y = element_blank())
+
+# left column: envelope (A, C)
+col_env <- plot_grid(p_accenv + no_y, p_decenv + no_y,
+                     ncol = 1, align = "v",
+                     labels = c("A", "C"), label_size = 12, label_fontfamily = "times")
+
+# right column: f0 (B, D)
+col_f0 <- plot_grid(p_accf0 + no_y, p_decf0 + no_y,
+                    ncol = 1, align = "v",
+                    labels = c("B", "D"), label_size = 12, label_fontfamily = "times")
+
+# shared y-axis labels
+ylab_env <- ggdraw() + draw_label("Amplitude envelope peak (normalized)",
+                                  angle = 90, fontfamily = "times", size = 10)
+ylab_f0  <- ggdraw() + draw_label("F0 peak (normalized)",
+                                  angle = 90, fontfamily = "times", size = 10)
+
+grid_kin <- plot_grid(ylab_env, col_env, ylab_f0, col_f0,
+                      nrow = 1, rel_widths = c(0.06, 1, 0.06, 1))
+
+# portrait format
+ggsave(file.path(plots, "kinematics_grid.png"), grid_kin, width = 7, height = 9, dpi = 300)
+ggsave(file.path(plots, "kinematics_grid.png"), grid_kin, width = 5, height = 7, dpi = 300)
+
+grid_kin
+```
+
+Deceleration for f0 and env only. **This plot we use in the corrigendum**
+
+```{r message=FALSE, warning = FALSE}
+
+no_x <- theme(axis.title.x = element_blank())
+
+panels_dec <- plot_grid(
+  p_decenv + no_x,
+  p_decf0  + no_x,
+  ncol = 2, align = "h",
+  labels = c("A", "B"), label_size = 12, label_fontfamily = "times")
+
+xlab_dec <- ggdraw() + draw_label("Deceleration peak, wrist (cm/s^2)",
+                                  fontfamily = "times", size = 10)
+
+grid_dec <- plot_grid(panels_dec, xlab_dec,
+                      ncol = 1, rel_heights = c(1, 0.05))
+
+ggsave(file.path(plots, "deceleration_grid.png"), grid_dec, width = 9, height = 4.5, dpi = 300)
+ggsave(file.path(plots, "deceleration_grid.jpg"), grid_dec, width = 9, height = 4.5, dpi = 300)
+
+grid_dec
+
+```
 
 ## Plotting time series
 

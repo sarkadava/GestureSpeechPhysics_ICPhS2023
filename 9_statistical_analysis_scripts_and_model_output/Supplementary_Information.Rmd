@@ -1,0 +1,253 @@
+---
+title: |
+  | Supplementary Material:
+  | Is gesture-speech physics at work in rhythmic pointing?
+  | Evidence from Polish counting-out rhymes
+author: "Šárka Kadavá, Aleksandra Ćwiek, Katarzyna Stoltmann, Susanne Fuchs, Wim Pouw"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    fig_caption: true
+header-includes:
+  - \usepackage{float}
+  - \floatplacement{figure}{H}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE,
+                      fig.align = "center", fig.pos = "H",
+                      dev = "png", dpi = 300)
+
+library(brms)
+library(posterior)
+library(bayesplot)
+library(ggplot2)
+library(cowplot)
+library(kableExtra)
+
+# same folder logic as the analysis script:
+# knit this file from the folder that contains the analysis script
+parentfolder <- dirname(getwd())
+model_dir    <- file.path(parentfolder, "9_statistical_analysis_scripts_and_model_output")
+
+n_ppc <- 1000   # number of draws in the posterior predictive checks
+```
+
+```{r load-models}
+models <- list(
+  f0_acc  = readRDS(file.path(model_dir, "f0peak_acc_new.rds")),
+  f0_dec  = readRDS(file.path(model_dir, "f0peak_dec_new.rds")),
+  env_acc = readRDS(file.path(model_dir, "envpeak_acc_new.rds")),
+  env_dec = readRDS(file.path(model_dir, "envpeak_dec_new.rds"))
+)
+```
+
+```{r helpers}
+# ---- labels: model coefficient name -> label shown in tables and plots ----
+make_labels <- function(kin_var, kin_lab) {
+  labs <- c("Intercept"      = "Intercept",
+            "speech_rate_s"  = "Speech rate",
+            "point_direct_s" = "Movement direction",
+            kin_lab,
+            "sex_s"          = "Sex",
+            paste0("Movement direction \u00d7 ", kin_lab))
+  names(labs)[4] <- kin_var
+  names(labs)[6] <- paste0("point_direct_s:", kin_var)
+  labs
+}
+
+labels <- list(
+  f0_acc  = make_labels("wrist_apeak",   "Wrist acc. peak"),
+  f0_dec  = make_labels("wrist_decpeak", "Wrist dec. peak"),
+  env_acc = make_labels("wrist_apeak",   "Wrist acc. peak"),
+  env_dec = make_labels("wrist_decpeak", "Wrist dec. peak")
+)
+
+# ---- posterior summary: mean, 95% CrI, Pr(beta < 0 or > 0) ----
+summarise_fixef <- function(fit, labs) {
+  dr   <- as_draws_df(fit)
+  pars <- paste0("b_", names(labs))
+  miss <- setdiff(pars, names(dr))
+  if (length(miss) > 0) stop("Not found in model: ", paste(miss, collapse = ", "))
+
+  out <- do.call(rbind, lapply(pars, function(p) {
+    x <- dr[[p]]
+    m <- mean(x)
+    q <- quantile(x, c(0.025, 0.975))
+    # probability in the direction of the posterior mean
+    pr <- if (m >= 0) mean(x > 0) else mean(x < 0)
+    data.frame(estimate = m, lower = q[[1]], upper = q[[2]], pr = pr)
+  }))
+  out$pr[names(labs) == "Intercept"] <- NA
+  cbind(parameter = unname(labs), out)
+}
+
+# ---- LaTeX table in the style of the original supplement ----
+coef_table <- function(s, caption, digits = 2) {
+  fmt  <- function(x) gsub("-", "$-$", formatC(x, format = "f", digits = digits), fixed = TRUE)
+  bold <- function(x, cond) ifelse(cond, paste0("\\textbf{", x, "}"), x)
+
+  reliable <- s$lower > 0 | s$upper < 0
+  tab <- data.frame(
+    parameter = gsub("\u00d7", "$\\times$", s$parameter, fixed = TRUE),
+    estimate  = bold(fmt(s$estimate), reliable),
+    cri       = bold(paste0("[", fmt(s$lower), "; ", fmt(s$upper), "]"), reliable),
+    pr        = ifelse(is.na(s$pr), "",
+                       bold(formatC(s$pr, format = "f", digits = 2), s$pr >= 0.95))
+  )
+
+  kbl(tab, format = "latex", booktabs = TRUE, escape = FALSE, caption = caption, linesep = "",
+      col.names = c("", "Estimate", "95\\% CrI", "Pr($\\beta$ < or > 0)"),
+      align = "lrcc") |>
+    kable_styling(latex_options = "HOLD_position") |>
+    footnote(general = "Bold estimates: 0 lies outside the 95% credible interval. Bold probabilities: at least 0.95.",
+             general_title = "", threeparttable = TRUE)
+}
+
+table_caption <- "A summary of posterior distributions for the tested parameters. The column Estimate shows the posterior means; the 95\\% credible intervals are given in brackets. The rightmost column shows the probability of the posteriors to lie above or below 0, in the direction of the estimate."
+
+# ---- posterior predictive check ----
+ppc_plot <- function(fit, xlab) {
+  pp_check(fit, ndraws = n_ppc) +
+    labs(x = xlab, y = "Density") +
+    theme_cowplot(11) +
+    theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(),
+          legend.position = "right")
+}
+
+# ---- posterior distributions (one panel per predictor, free scales) ----
+posterior_plot <- function(fit, labs, exclude = "Intercept") {
+  keep <- setdiff(names(labs), exclude)
+  dr   <- as_draws_df(fit)
+
+  long <- do.call(rbind, lapply(keep, function(k)
+    data.frame(parameter = labs[[k]], value = dr[[paste0("b_", k)]])))
+  long$parameter <- factor(long$parameter, levels = unname(labs[keep]))
+
+  ci <- do.call(rbind, lapply(split(long$value, long$parameter), function(x)
+    data.frame(mean = mean(x), lower = quantile(x, 0.025), upper = quantile(x, 0.975))))
+  ci$parameter <- factor(rownames(ci), levels = levels(long$parameter))
+
+  ggplot(long, aes(x = value)) +
+    geom_density(fill = "gray85", colour = "gray30") +
+    geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.4) +
+    geom_segment(data = ci, aes(x = lower, xend = upper, y = 0, yend = 0),
+                 colour = "red", linewidth = 1.5, inherit.aes = FALSE) +
+    geom_point(data = ci, aes(x = mean, y = 0), colour = "red", size = 2,
+               inherit.aes = FALSE) +
+    facet_wrap(~ parameter, scales = "free", ncol = 2) +
+    labs(x = "Posterior estimate", y = "Density") +
+    theme_cowplot(10) +
+    theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(),
+          strip.background = element_blank(), strip.text = element_text(face = "bold"))
+}
+
+post_caption <- function(name) paste0(
+  "Posterior distributions of the predictors in the ", name,
+  " model. The red line shows the 95\\% credible interval and the red point the posterior mean; ",
+  "the dashed line marks 0. The intercept is not shown.")
+
+ppc_caption <- function(name, unit) paste0(
+  "Posterior predictive checks for the ", name, " model. The x-axis shows ", unit,
+  " and the y-axis the density of the values. $y$ is the distribution of the observed data; ",
+  "$y_{rep}$ are ", n_ppc, " distributions simulated from the posterior, i.e., from the priors, the data, and the model.")
+```
+
+This report is an extended summary of the statistical analyses conducted for the paper *Is gesture-speech physics at work in rhythmic pointing? Evidence from Polish counting-out rhymes*. In the following, we present the full outputs of all four Bayesian linear regression models, the posterior predictive checks, and the posterior distributions. We begin by explaining how to interpret these outputs.
+
+In the model outputs, the crucial values are the 95% credible interval (95% CrI) and the posterior probability. Both are based on three pillars: the priors (i.e., prior beliefs about the parameters), the data (i.e., real-world observations), and the model (i.e., the model architecture).
+
+The 95% CrI is the interval that contains 95% of the posterior distribution of a parameter. Together with the posterior estimate, it is a numeric summary of the posterior distribution plots. If the 95% CrI does not include the reference point (here 0), this suggests a reliable influence of the predictor on the outcome variable. The posterior probability expresses the proportion of posterior samples that lie below or above 0. A posterior probability of 1.00 means that 100% of the posterior samples lie on one side of 0. The direction follows the sign of the estimate: for positive estimates, the probability of the posteriors lying above 0 is given; for negative estimates, the probability of lying below 0. We allowed for this bidirectional testing because, while we expected the direction of some effects (e.g., sex and speech rate, with women and faster speech exhibiting higher F0), the expectations for other predictors were open.
+
+The posterior predictive checks visualize the model fit: the lines $y$ (distribution of the observations) and $y_{rep}$ (distributions simulated from the posterior) should overlap as closely as possible. As can be seen in Figure 1 and Figure 3, the raw F0 data include an additional peak between 100–150 Hz, which could not be predicted by the model, despite controlling for sex. This could have various reasons, such as the data distribution or further influential factors that were not included in the model. Since the experiment was not heavily controlled and F0 fulfills further functions (such as prosodic functions), further factors may contribute to the variance. Nevertheless, there are no signs of convergence issues.
+
+Finally, we present the posterior distributions of the predictors. These are graphic displays of the posterior estimates and the 95% CrIs, given here to ease the interpretation of the meaningful predictors.
+
+\newpage
+
+# F0 Acceleration
+
+## Model Output
+
+```{r f0-acc-table}
+coef_table(summarise_fixef(models$f0_acc, labels$f0_acc), table_caption)
+```
+
+## Posterior Predictive Checks
+
+```{r f0-acc-ppc, fig.width = 6.5, fig.height = 3.2, fig.cap = ppc_caption("F0 acceleration", "F0 in Hz")}
+ppc_plot(models$f0_acc, "F0 peak (Hz)")
+```
+
+## Posterior Distributions
+
+```{r f0-acc-post, fig.width = 6.5, fig.height = 5, fig.cap = post_caption("F0 acceleration")}
+posterior_plot(models$f0_acc, labels$f0_acc)
+```
+
+\newpage
+
+# F0 Deceleration
+
+## Model Output
+
+```{r f0-dec-table}
+coef_table(summarise_fixef(models$f0_dec, labels$f0_dec), table_caption)
+```
+
+## Posterior Predictive Checks
+
+```{r f0-dec-ppc, fig.width = 6.5, fig.height = 3.2, fig.cap = ppc_caption("F0 deceleration", "F0 in Hz")}
+ppc_plot(models$f0_dec, "F0 peak (Hz)")
+```
+
+## Posterior Distributions
+
+```{r f0-dec-post, fig.width = 6.5, fig.height = 5, fig.cap = post_caption("F0 deceleration")}
+posterior_plot(models$f0_dec, labels$f0_dec)
+```
+
+\newpage
+
+# Envelope Acceleration
+
+## Model Output
+
+```{r env-acc-table}
+coef_table(summarise_fixef(models$env_acc, labels$env_acc), table_caption)
+```
+
+## Posterior Predictive Checks
+
+```{r env-acc-ppc, fig.width = 6.5, fig.height = 3.2, fig.cap = ppc_caption("envelope acceleration", "the amplitude envelope peak (normalized per speaker)")}
+ppc_plot(models$env_acc, "Amplitude envelope peak (normalized)")
+```
+
+## Posterior Distributions
+
+```{r env-acc-post, fig.width = 6.5, fig.height = 5, fig.cap = post_caption("envelope acceleration")}
+posterior_plot(models$env_acc, labels$env_acc)
+```
+
+\newpage
+
+# Envelope Deceleration
+
+## Model Output
+
+```{r env-dec-table}
+coef_table(summarise_fixef(models$env_dec, labels$env_dec), table_caption)
+```
+
+## Posterior Predictive Checks
+
+```{r env-dec-ppc, fig.width = 6.5, fig.height = 3.2, fig.cap = ppc_caption("envelope deceleration", "the amplitude envelope peak (normalized per speaker)")}
+ppc_plot(models$env_dec, "Amplitude envelope peak (normalized)")
+```
+
+## Posterior Distributions
+
+```{r env-dec-post, fig.width = 6.5, fig.height = 5, fig.cap = post_caption("envelope deceleration")}
+posterior_plot(models$env_dec, labels$env_dec)
+```
