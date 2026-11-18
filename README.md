@@ -4,10 +4,10 @@
 
 Polish native speakers were asked to perform six Polish counting-out rhymes in different conditions. The counting-out game involves rhythmically uttering a rhyme while pointing at the other players of the game. It is typically played by children, for example by randomly choosing a person that will do something. An example of a counting-out rhyme in English is:
 
->Eeny, meeny, miny, moe,
->Catch a tiger by the toe.
->If he hollers, let him go,
->Eeny, meeny, miny, moe.
+  *Eeny, meeny, miny, moe,
+  Catch a tiger by the toe.
+  If he hollers, let him go,
+  Eeny, meeny, miny, moe.*
 
 The experiment was a within-subjects design and involved a total of four movement- and one still condition. The movement conditions involved pointing with the left or the right hand at a self-paced “normal” speed, and an “enhanced” speed condition (i.e., four conditions in total: left-hand normal speed, left-hand fast speed, right-hand normal speed, right-hand fast speed). For the still condition, participants were asked to read the rhyme without any movement.
 
