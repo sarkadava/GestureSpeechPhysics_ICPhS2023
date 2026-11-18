@@ -1,0 +1,502 @@
+---
+title: "Is gesture-speech physics at work in rhythmic pointing? Evidence from Polish counting-out rhymes"
+author: "Aleksandra Ćwiek, Šárka Kadavá, Susanne Fuchs, Wim Pouw (alphabetical)"
+date: "2022-11-01"
+output:
+  prettydoc::html_pretty:
+    theme:  tactile
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+In this notebook we explain how we process the data for the ICPhS paper **Is gesture-speech physics at work in rhythmic pointing? Evidence from Polish counting-out rhymes**
+
+# Detailed explanation of the study and the type of data and variables
+
+Eleven native speakers (three male) of Polish were asked to perform six counting-out rhymes in two different movement conditions and one still condition. The movement conditions involved the counting-out movement with the left or the right hand, and the still condition involved reading the rhyme without any movement. All speakers were right-handed. Additionally, in the movement conditions, speakers were asked to repeat the rhyme with enhanced speed, resulting in another condition. 
+
+Altogether, these sum up to five conditions:
+
+* left hand normal speed
+* left hand fast speed
+* right hand normal speed
+* right hand fast speed
+* reading
+
+The order of the blocks was the same for all participants (reading, natural, fast), but the order of counting-out rhymes was randomized as well as whether they began with the dominant or non-dominant hand.
+
+In all of those conditions, the participants performed six counting-out rhymes, the order of which was randomized across participants (cf. rhyme_order.xlsx or columns 6:11 in info.xlsx).
+
+The participants were asked to perform each rhyme with a confederate teddy bear placed in front of them. For each condition, the participants were standing.
+
+
+# Loading in the folders and setup 
+```{r folderload, echo = TRUE, message=FALSE, warning = FALSE}
+
+################# folders ####################
+
+dataOK <- c("vp11", "vp9", "vp8", "vp6", "vp5", "vp4", "vp3", "vp1")
+
+#current folder (first go to session -> set working directory -> to source file location)
+parentfolder <- dirname(getwd())
+
+#list the folders
+foldermotion  <- paste0(parentfolder, '/1_primary_data_to_be_processed/data_motion/')
+folderaudio   <- paste0(parentfolder, '/1_primary_data_to_be_processed/data_audio/')
+dataworkspace <- paste0(parentfolder, '/3_processed_data/')
+datamerged    <- paste0(parentfolder, '/4_merged_data/')
+
+
+#uncomment if you want to check folders for your machine
+#print(foldermotion)
+#print(folderaudio)
+#print(dataworkspace)
+
+
+#################### packages ####################
+library(seewave) # this for signal processing
+library(signal) # this for signal processing
+library(rPraat) # this for acoustic analyses
+library(dplR) # for data wrangling
+library(rstudioapi) # relative foldering
+library(stringr) # string manipulation
+library(wrassp) #  F0 generation
+library(readr) # string manipulation
+library(readxl) # excel file reading
+library(readtextgrid)   #reading txt grids
+library(textgRid) #reading txt grids
+library(zoo) #time series functions
+library(pracma) #time series functions
+library(stringi) # for syllable replacement
+library(dplyr) #data summurization
+
+```
+
+# Processing the audio into time series
+
+## Amplitude envelope extraction
+```{r extract_amplitude envelope, echo=TRUE, message=FALSE, warning = FALSE}
+
+# you can check out: https://wimpouw.github.io/EnvisionBootcamp2021/extract_AmplitudeEnvelope_Rmarkdown.html
+
+overwrite <- FALSE # do not overwrite existing files
+
+#list of the wav's                                                                    
+list_wavs <- list.files(folderaudio, pattern = ".wav") 
+
+# processsing settings
+resample_rate <- 200 # Hz
+smoothing <- 5 # 5Hz low pass hanning (the lower the value the more smooth)
+
+
+##################### main function to extract smoothed envelope ###############################
+
+amplitude_envelope.extract <- function(locationsound, smoothingHz, resampledHz)
+{
+  #read the sound file into R
+  snd <- rPraat::snd.read(locationsound)
+  #apply the hilbert on the signal
+  hilb <- seewave::hilbert(snd$sig, f = snd$fs, fftw =FALSE)
+  #apply complex modulus
+  env <- as.vector(abs(hilb))
+  #smooth with a hanning window
+  env_smoothed <- dplR::hanning(x= env, n = snd$fs/smoothingHz)
+  #set undeterminable at beginning and end NA's to 0
+  env_smoothed[is.na(env_smoothed)] <- 0
+  #resample settings at desired sampling rate
+  f <- approxfun(1:(snd$duration*snd$fs),env_smoothed)
+  #resample apply
+  downsampled <- f(seq(from=0,to=snd$duration*snd$fs,by=snd$fs/resampledHz))
+  #let function return the downsampled smoothed amplitude envelope
+  return(downsampled[!is.na(downsampled)])
+}
+
+#loop through soundfile locations
+for(wav in list_wavs)
+  {
+   #do not run this when these files are already generated
+  if((!file.exists(paste0(dataworkspace, substr(wav, 1, nchar(wav)-4), "_ENV", ".csv"))) & (overwrite!=TRUE))
+  {
+  #location of the current sound file in the loop  
+  locsound <- paste0(folderaudio, wav)
+  #get the amplitude envelope at location, 5Hz Hanning, 100Hz sampling
+  env <- amplitude_envelope.extract(locsound, smoothing, resample_rate)
+  #make a time vector based on sampling rate (1000/Hz)
+  time_ms <- seq(1000/resample_rate, length(env)*(1000/resample_rate), by = 1000/resample_rate)
+  #bind into data frame
+  ENV <- cbind.data.frame(time_ms, env)
+  #save it to a folder
+  write.csv(ENV, file = paste0(paste0(dataworkspace, substr(wav, 1, nchar(wav)-4), "_ENV", ".csv")),row.names=FALSE) 
+  }
+}
+```
+
+## F0 Extraction
+```{r extractF0, echo=TRUE, message=FALSE, warning = FALSE}
+
+#for info see here https://osf.io/m43qy
+#this script automatically assesses F0 traces from audio using WRASSP. It also needs a META data_file containing gender information so as to set F0 ranges.
+# Function extracts F0 traces from wav, given gender info, at a particular sampling frequency
+# algorithm is based on K. Schaefer-Vincent periodicity detection
+#FOR INFO ABOUT WRASSP SEE https://ips-lmu.github.io/The-EMU-SDMS-Manual/chap-wrassp.html
+
+#SET DATA READING AND WRITING LOCATIONS
+list_wavs <- list.files(paste0(folderaudio), pattern = ".wav")
+META <- read_excel(paste0(folderaudio, "/info.xlsx"))
+META$gender <- ifelse(META$sex=='female', 'f', 'm')
+
+#processsing settings
+resample_rate <- 200 #Hz
+
+# do we want to overwrite files?
+overwrite <- FALSE
+
+################### function to extract F0 ############################
+
+F0.extract <- function(locationsound, gender_fm, resampledHz)
+{
+  if(gender_fm == 'f'){ ranges <- c(100, 450)} # ranges for females and males (data-driven decision)
+  if(gender_fm == 'm'){ ranges <- c(70, 300)}
+
+  minF0   <- ranges[1] 
+  maxF0   <- ranges[2]
+
+  F0     <- wrassp::ksvF0(locationsound, windowShift=1000/resampledHz, toFile = FALSE, maxF = maxF0, minF = minF0) 
+  
+  #extract F0 info and save into object
+  
+  F0_vec <- F0$F0[,1]                                                                        #only save F0 trace
+  F0_time <- seq(from = attributes(F0)$startTime*1000,                                       #make time vector
+                 to = attributes(F0)$endRecord[1]*(1000/attributes(F0)$sampleRate), 
+                 by = 1000/attributes(F0)$sampleRate )
+  F0_df <- cbind.data.frame(round(F0_time), F0_vec) #save time and F0 trace into one object
+  return( F0_df )
+}
+
+#loop through the folder containing audio (wav files) and extract F0
+for(wav in list_wavs)
+  {
+
+    #do not run this when these files are already generated
+    if((!file.exists(paste0(dataworkspace, str_sub(wav, end = -5), "_F0.csv"))) | (overwrite==TRUE))
+    {
+    #take gender info
+    print(wav)
+    PP <- readr::parse_number(wav) #what is the participant number as indicated by the filename of the audio
+    gender <- META$gender[META$VP==PP] #save the gender from META based on the participantnumber
+    locsound <- paste0(folderaudio, wav)                      #where is the soundfile
+    F0_vec <- F0.extract(locsound, gender, resample_rate)                      #APPLY MAIN FUNCTION
+    colnames(F0_vec) <- c("time_ms", "F0")
+    write.csv(F0_vec, file = paste0(dataworkspace, str_sub(wav, end = -5), "_F0.csv"),row.names=FALSE) #WRITE TO A FILE AND SAVE
+    }
+  }
+```
+
+## Other functions
+```{r functions to be used, echo = TRUE}
+
+################### load.in.even function##################
+
+#this function loads into a time series an annotation dataframe with columns (begintime, endtime, annotation)
+load.in.event <- function(time_original, anno)
+{
+  output <- rep(NA, length(time_original))
+  for(i in 1:length(anno[,1])) #loop through each annotation event
+  {
+    #print(anno[i,3]) #you can print the value to check if this is running correctly
+    output <- ifelse((time_original >= anno[i,1] & time_original <= anno[i,2]), as.character(anno[i,3]), output)
+  }
+  return(output)
+}
+
+############# load.in.anno function ############################
+
+load.in.anno_num <- function(time_original, anno)
+{
+  output <- rep(NA, length(time_original))
+  for(i in 1:length(anno[,1])) #loop through each annotation event
+  {
+    #print(anno[i,3]) #you can print the value to check if this is running correctly
+    output <- ifelse((time_original >= anno[i,1] & time_original <= anno[i,2]), as.character(anno[i,4]), output)
+  }
+  return(output)
+}
+
+########################## gesture phases function ##############################################
+
+## this function automatically detect phases in gesture movement
+
+getphases.it <- function(time, mvmnt, syll) {
+  
+    # Convert the syllable_num column to numeric
+  syll <- as.numeric(as.character(syll))
+
+  # Find the minimum and maximum times for syllable_num 2 and the last unique value in syllable_num, respectively (first and last syllable in each rhyme is a pause)
+  minsyll <- min(time[syll==2])
+  maxsyll <- max(time[syll==(length(unique(syll))-1)])
+
+  # Create a speech column that indicates whether there is ongoing speech or not
+  speech <- "no on speech"
+  speech[time >= minsyll & time <= maxsyll]  <- "ongoing speech"
+
+  # Create column for peaks
+  peaks_tbs <- rep(NA, length(mvmnt))
+  # Centering the mvmnt values so forward is + and backward -
+  centered_mvmnt <- mvmnt - mean(mvmnt) 
+  # Finding peaks of absolutized mvmnt (for both backward and forward mvmnt)
+  allpeaks <- findpeaks(abs(centered_mvmnt))[,2] 
+  peaks_tbs[allpeaks] <- mvmnt[allpeaks] # put those peaks into peak-column
+  peaks_tbs[!is.na(peaks_tbs)] <- ifelse(centered_mvmnt[allpeaks] > 0, 'start_backward', 'start_forward') #if values are -, it's start of forward mvmnt, if +, start of the backward
+
+  # Create the annotation data frame with the begin and end times for each gesture phase
+  begintime <- time[allpeaks[1:length(allpeaks)-1]] #remove the last value
+  endtime <-  time[allpeaks[-1]] #remove the first value
+  anno <-  ifelse(peaks_tbs[allpeaks[1:length(allpeaks)-1]]=='start_backward', 'forward_movement','backward_movement') # annotation of mvmnt direction
+  anno2 <-  cumsum(c(TRUE, anno[-1] != anno[-length(anno)])) # annotation of gesture phases (by numbers; consecutive segments with same direction share a number)
+  gesturephas <- cbind.data.frame(begintime, endtime, anno) # gp by direction
+  gesturephas2 <- cbind.data.frame(begintime, endtime, anno2) # gp by number
+  
+  #get it ready to use our function again to load annotations into a time series
+  gesture_phases <- load.in.event(time, gesturephas)
+  gesture_phases2 <- load.in.event(time, gesturephas2)
+  
+  return(cbind(gesture_phases,gesture_phases2))
+}
+```
+
+## Merging motion tracking 
+```{r merginstuff, echo = TRUE}
+
+# we will now merge F0, envelope, textgrids with right hand data (200 Hz sampling frequency)
+
+#first give the list of files for which we have envelopes
+envelopedata <- list.files(dataworkspace, pattern = '*.ENV.csv')
+
+############# butter filter ###############
+butter.it <- function(x, samplingrate = 200, order=2, lowpasscutoff=30)
+{bf <- butter(order,lowpasscutoff/samplingrate, type="low") #normalized frequency
+x <<- as.numeric(signal::filtfilt(bf, x))} #apply forwards and backwards using filtfilt
+
+############### merging ###################
+
+#loop through them and merge
+for(d in envelopedata)
+{
+   #d <- envelopedata[1] # for when you want to test
+   trial <- str_remove(d, '_ENV.csv')
+   lefttrue <- grepl('Left', d, fixed = TRUE) #does it contain left (than it is a Left handed trial)
+   kside <- ifelse(lefttrue, '_L', '_R')  #check which hand we need
+
+   #read envelope
+   env <- read.csv(paste0(dataworkspace, '/', d))
+   #read F0
+   F0 <- read.csv(paste0(dataworkspace, '/', trial, '_F0.csv'))
+   #read textgrid and prepare them for reading into the time series
+   fname <- paste0(folderaudio, trial, '.TextGrid')
+   
+   if(file.exists(fname))
+   {
+   #prepare textgrids
+   txtgrds <- readtextgrid::read_textgrid(fname)
+   txtgrds_syl <- txtgrds[txtgrds$tier_name=='SYL',]
+   xmin <- round(txtgrds_syl$xmin*1000)
+   ymin <- round(txtgrds_syl$xmax*1000)
+   anno1 <- txtgrds_syl$text
+   anno_num <- txtgrds_syl$annotation_num
+   annotation <- cbind.data.frame(xmin,ymin,anno1,anno_num) #we end up with a file that we can use in our read annotation function
+   check1 <- file.exists(paste0(foldermotion,  trial,kside, 'FING.csv'))
+   check2 <- file.exists(paste0(foldermotion,  trial,kside, 'HAND.csv'))
+   check3 <- file.exists(paste0(foldermotion,  trial,kside, 'ELB.csv'))#check if all motion files exist, otherwise skip
+   #get ready for preprocessing speech or or speech and motion
+   lesen <- grepl("Lesen", d, fixed = TRUE) # check if it contains Lesen
+   
+   ######## merging lesen files #################
+   if(lesen) #if it is a lesen condition there is no movement so well fill with empties
+   {
+     ac_merged     <- merge(x=env, y = F0, by.x = "time_ms", by.y = "time_ms", all=TRUE)
+     ac_merged$env <-  na.approx(ac_merged$env, x = ac_merged$time_ms,
+na.rm=FALSE)
+     ac_merged <- ac_merged[(!is.na(ac_merged$F0)),]
+     ac_merged <- na.trim(ac_merged) #also remove trailing Na's
+     
+     # make some empty variables
+     ac_merged$x_fing <- ac_merged$y_fing <- ac_merged$z_fing <- ac_merged$x_wrist <- ac_merged$y_wrist <- ac_merged$z_wrist <- ac_merged$x_elb <-
+     ac_merged$y_elb <- ac_merged$z_elb <- ac_merged$speed_fing <- ac_merged$speed_wrist <- ac_merged$speed_elb <- ac_merged$acc_fing <- ac_merged$acc_wrist <-
+     ac_merged$acc_elb <- ac_merged$gesture_phases <- ac_merged$movementdirection<- NA
+     #read in textgrid info
+     ac_merged$syllable <- load.in.event(time_original = ac_merged$time_ms, anno = annotation) #apply function
+     ac_merged$syllable_num <- load.in.anno_num(time_original = ac_merged$time_ms, anno = annotation) #apply function
+     #add some info for analyses
+     ac_merged$participant <- readr::parse_number(sub("\\_.*", "", trial))
+     ac_merged$hand <- NA
+     ac_merged$speed_condition <- ifelse(grepl("fast", trial), "fast",
+"normal")
+       # look for last five characters and make new column rhyme
+     ac_merged$rhyme <- parse_number(str_sub(trial,-5,-1))
+     ac_merged$rhyme <- as.factor(ac_merged$rhyme)
+     ac_merged$condition_speech <- "lesen"
+      
+     ################ adding rhyme name info ##################
+     # loop over the rows of the df data frame 
+     for (i in 1:nrow(ac_merged)) {
+       # get the participant and rhyme values for the current row
+       participant <- as.character(ac_merged[i, "participant"])
+       rhyme <- as.character(ac_merged[i, "rhyme"])
+
+       # find the rows in the info data frame that correspond to the participant and rhyme values
+       rows <- which(META$VP == participant)
+
+       # loop over the matching rows of the info data frame
+       for (j in 1:length(rows)) {
+         # get the current row number
+         row <- rows[j]
+
+         # loop over the columns 6 to 11 of the info data frame
+         for (k in 6:11) {
+           # check if the current column contains the rhyme value
+           if (META[row, k] == rhyme) {
+             # if the column contains the rhyme value, add the column name to the df data frame
+             ac_merged[i, "rhyme_name"] <- colnames(META)[k]
+           }
+         }
+       }
+     }
+     
+     ######### correction of syllables ###################
+     # change all the necessary syllables
+     ac_merged$syllable <-
+       stringi::stri_replace_all_regex(ac_merged$syllable,
+                                       pattern = c("^$", "bEnts", "dn_jje", "do<p:>", "^jes$", "n_jje", "^raz$", "^s$", "^tO$", "^zjeZ$"),
+                                       replacement = c("<p:>", "beNts", "dn_je", "do", "jest", "n_je", "ras", "es", "to", "zjeS"),
+                                       vectorize = FALSE)
+
+     write.csv(ac_merged, paste0(datamerged, trial, '.csv'))
+   }
+   
+   ############## merging motion files #################
+   
+   if(check1 & check2 & check3) #if it is movement, we have to do a little bit more (processing), hence the longer chunk
+   {
+   #read movement
+     #which hand is supposed to move?
+     #read movement fing
+     fing  <- read.csv(paste0(foldermotion,  trial,kside, 'FING.csv'))
+     #read wrist
+     wrist <- read.csv(paste0(foldermotion, trial,kside, 'HAND.csv'))
+     #read movement elbow
+     elbow <- read.csv(paste0(foldermotion,  trial,kside, 'ELB.csv'))
+   #merge acoustics
+   ac_merged     <- merge(x=env, y = F0, by.x = "time_ms", by.y = "time_ms", all=TRUE)
+   ac_merged$env <-  na.approx(ac_merged$env, x = ac_merged$time_ms,
+na.rm=FALSE)
+   ac_merged <- ac_merged[(!is.na(ac_merged$F0)),]
+   ac_merged <- na.trim(ac_merged) #also remove trailing Na's
+   #merge movements
+   timeunits <- 1000/200
+   time_ms <- round(seq(0,(nrow(fing)-1)*timeunits, timeunits))
+   mov_merged     <- cbind.data.frame( time_ms,  fing , wrist, elbow )
+   movementvariables <- c("x_fing", "y_fing", "z_fing","x_wrist", "y_wrist", "z_wrist","x_elb", "y_elb", "z_elb")
+   colnames(mov_merged) <- c('time_ms', movementvariables)
+
+   #movement columns
+   #merge movements and acoustics
+   mac_merged     <- merge(x=ac_merged, y = mov_merged, by.x = "time_ms", by.y = "time_ms", all=TRUE)
+   mac_merged[,movementvariables] <-
+apply(mac_merged[,movementvariables], 2, FUN = function(y) na.approx(y, x = mac_merged$time_ms, na.rm=FALSE))
+   mac_merged <- mac_merged[(!is.na(mac_merged$F0)),]
+   mac_merged <- na.trim(mac_merged) #also remove trailing Na's
+   #smooth
+   mac_merged[,movementvariables] <-
+apply(mac_merged[,movementvariables], 2, FUN = function(y) butter.it(x=y))
+   #add 3D speed and 3D acceleration)
+   mac_merged$speed_fing  <- butter.it(c(0,sqrt(diff(mac_merged$x_fing
+)^2+diff(mac_merged$y_fing)^2+diff(mac_merged$z_fing)^2)))
+   mac_merged$speed_wrist <-
+butter.it(c(0,sqrt(diff(mac_merged$x_wrist)^2+diff(mac_merged$y_wrist)^2+diff(mac_merged$z_wrist)^2)))
+   mac_merged$speed_elb  <- butter.it(c(0,sqrt(diff(mac_merged$x_elb
+)^2+diff(mac_merged$y_elb)^2+diff(mac_merged$z_elb)^2)))
+   mac_merged$acc_fing  <- butter.it(c(0, diff(mac_merged$speed_fing )))
+   mac_merged$acc_wrist <- butter.it(c(0, diff(mac_merged$speed_wrist)))
+   mac_merged$acc_elb  <- butter.it(c(0, diff(mac_merged$speed_elb )))
+     #to remove the edge effect, we will not consider the first values
+   mac_merged[c(1:50, (nrow(mac_merged)-50):nrow(mac_merged)),] <- NA
+   mac_merged <- na.trim(mac_merged)
+   #read in textgrid info
+   mac_merged$syllable <- load.in.event(time_original = mac_merged$time_ms, anno = annotation) #apply function
+   mac_merged$syllable_num <- load.in.anno_num(time_original = mac_merged$time_ms, anno = annotation) #apply function
+
+   #add some info for analyses
+   mac_merged$participant <- readr::parse_number(sub("\\_.*", "", trial))
+   mac_merged$hand <- kside
+   mac_merged$speed_condition <- ifelse(grepl("fast", trial), "fast",
+"normal")
+     # look for last five characters and make new column rhyme
+   mac_merged$rhyme <- parse_number(str_sub(trial,-5,-1))
+   mac_merged$rhyme <- as.factor(mac_merged$rhyme)
+   mac_merged$condition_speech <- "motion_speech"
+   
+  ######## get gesture phases ############
+  gesture_phasingresults <- getphases.it(time = mac_merged$time_ms, mvmnt = mac_merged$z_fing, syll = mac_merged$syllable_num)
+  mac_merged$movementdirection <- gesture_phasingresults[,1] #this has the 'forward_movement info'
+  mac_merged$gesture_phases    <- gesture_phasingresults[,2] #this has the unique phase number (within trials)
+  
+  ## NA-ing gesture phases outside speech
+  ### Find the minimum and maximum times for syllable_num 2 and the last unique value in syllable_num, respectively
+  minsyll <- min(mac_merged$time_ms[mac_merged$syllable_num==2])
+  maxsyll <- max(mac_merged$time_ms[mac_merged$syllable_num==(length(unique(mac_merged$syllable_num))-1)])
+
+  # Create a speech column that indicates whether there is ongoing speech or not
+  mac_merged$speech <- "no on speech"
+  mac_merged$speech[mac_merged$time_ms >= minsyll & mac_merged$time_ms <= maxsyll]  <- "ongoing speech"
+  mac_merged$movementdirection[mac_merged$speech== "no on speech"] <- NA
+  mac_merged$gesture_phases[mac_merged$speech== "no on speech"] <- NA # NA to gesture phases that happen outside of speech
+  
+  ############# add rhyme name info ##################
+  # loop over the rows of the df data frame 
+     for (i in 1:nrow(mac_merged)) {
+       # get the participant and rhyme values for the current row
+       participant <- as.character(mac_merged[i, "participant"])
+       rhyme <- as.character(mac_merged[i, "rhyme"])
+
+       # find the rows in the info data frame that correspond to the participant and rhyme values
+       rows <- which(META$VP == participant)
+
+       # loop over the matching rows of the info data frame
+       for (j in 1:length(rows)) {
+         # get the current row number
+         row <- rows[j]
+
+         # loop over the columns 6 to 11 of the info data frame
+         for (k in 6:11) {
+           # check if the current column contains the rhyme value
+           if (META[row, k] == rhyme) {
+             # if the column contains the rhyme value, add the column name to the df data frame
+             mac_merged[i, "rhyme_name"] <- colnames(META)[k]
+           }
+         }
+       }
+     }
+  
+ ######## correction of syllables ################
+     # change all the necessary syllables
+     mac_merged$syllable <-
+       stringi::stri_replace_all_regex(mac_merged$syllable,
+                                       pattern = c("^$", "bEnts", "dn_jje", "do<p:>", "^jes$", "n_jje", "^raz$", "^s$", "^tO$", "^zjeZ$"),
+                                       replacement = c("<p:>", "beNts", "dn_je", "do", "jest", "n_je", "ras", "es", "to", "zjeS"),
+                                       vectorize = FALSE)
+
+     
+  ### save to the merge folder
+   write.csv(mac_merged, paste0(datamerged, trial, '.csv'))
+     }
+   }
+   if(!check1){print(paste0('this motion file is not present: ', trial,kside, 'FING.csv'))}
+   if(!check2){print(paste0('this motion file is not present: ', trial,kside, 'HAND.csv'))}
+   if(!check3){print(paste0('this motion file is not present: ', trial,kside, 'ELB.csv'))} }
+
+
+```

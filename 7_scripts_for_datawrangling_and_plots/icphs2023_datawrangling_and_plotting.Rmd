@@ -1,0 +1,548 @@
+---
+title: "Is gesture-speech physics at work in rhythmic pointing? Evidence from Polish counting-out rhymes"
+author: "Šárka Kadavá, Aleksandra Ćwiek, Katarzyna Stoltmann, Susanne Fuchs, Wim Pouw"
+output:
+  prettydoc::html_pretty:
+    theme:  tactile
+date: "2023-01-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+In this notebook we do analysis for ICPhS paper on gesture-speech physics in counting-out rhymes
+
+## Detailed explanation of the study and the type of data and variables
+
+Eleven native speakers (three male) of Polish were asked to perform six counting-out rhymes in two different movement conditions and one still condition. The movement conditions involved the counting-out movement with the left or the right hand, and the still condition involved reading the rhyme without any movement. All speakers were right-handed. Additionally, in the movement conditions, speakers were asked to repeat the rhyme with enhanced speed, resulting in another condition. 
+
+Altogether, these sum up to five conditions:
+
+* left hand normal speed
+* left hand fast speed
+* right hand normal speed
+* right hand fast speed
+* reading
+
+The order of the blocks was the same for all participants (reading, natural, fast), but the order of counting-out rhymes was randomized as well as whether they began with the dominant or non-dominant hand.
+
+In all of those conditions, the participants performed six counting-out rhymes, the order of which was randomized across participants (cf. rhyme_order.xlsx or columns 6:11 in info.xlsx).
+
+The participants were asked to perform each rhyme with a confederate teddy bear placed in front of them. For each condition, the participants were standing.
+
+## Setting up the environment and packages
+
+```{r the data loading, packages, echo=TRUE, message=FALSE, warning = FALSE}
+
+parentfolder  <- dirname(getwd())
+input_data    <- paste0(parentfolder, '/6_datasets_for_exploration_and_plots/') # folder with datasets from previous script
+datasets      <- paste0(parentfolder, '/8_datasets_for_statistical_analysis/') # folder for saving datasets for statistics
+plots         <- paste0(parentfolder, '/10_plots/') # folder for saving plots
+
+# load the dataset from previous script if they are not in your environment
+timeseries <- read.csv(paste0(input_data, '/dataset_ts.csv'))
+#kinematics <- read.csv(paste0(input_data, '/dataset_kin.csv')) # this dataset we do not use here
+#kin_finger <- read.csv(paste0(input_data, '/dataset_kin_fing.csv')) # this dataset we do not use here
+kin_wrist <- read.csv(paste0(input_data, '/dataset_kin_wrist.csv'))
+
+############# packages 
+library(ggplot2) # for plotting
+library(ggpubr) # customizing ggplot
+library(dplyr) # data wrangling
+library(gridExtra) # customizing plots
+library(grid) # customizing plots
+library(scales) # for scaling in plotting
+library(cowplot) #for nice clean graphing
+library(RColorBrewer) #for coloring
+
+```
+
+## Data wrangling
+
+In this analysis, we are working only with wrist markers, as we expect the wrist coordinates to have more pronounced effects
+```{r datasets for models, echo=TRUE, message=FALSE, warning = FALSE}
+
+### we filter the data in which peaks happen in pause, since this cannot be a real peak
+
+kin_wrist <- subset(kin_wrist, env_syllable != '<p:>')
+
+### Let's build the dataset we will use for statistic analysis
+### We need to
+ #1 filter out peaks that happens in acoustic-kinematic synchrony higher than 80 ms as we expect that only tight synchrony can lead to effects
+ #2 filter out envelope amplitude peaks in which F0 is 0, as these cannot be real peaks
+### We are building the datasets for each acoustic-kinematic pair
+
+## env and acc in wrist with synchrony lower/higher than +-80
+df_envacc_sync_w <- subset(kin_wrist, wrist_accenv_sync >= -80 & wrist_accenv_sync <= 80)
+df_envacc_sync_w <- subset(df_envacc_sync_w, wrist_f0_accenvpeak != 0) ## put away envpeaks where f0 = 0
+# you can save it
+write.csv(df_envacc_sync_w, paste0(datasets, "dataset_env_acc.csv"), row.names = FALSE)
+
+## f0 and acc in wrist with synchrony lower/higher than +-80
+df_f0acc_sync_w <- subset(kin_wrist, wrist_accf0_sync >= -80 & wrist_accf0_sync <= 80)
+# you can save it
+write.csv(df_f0acc_sync_w, paste0(datasets, "dataset_f0_acc.csv"), row.names = FALSE)
+
+# env and dec in wrist with synchrony lower/higher than +-80
+df_envdec_sync_w <- subset(kin_wrist, wrist_decenv_sync >= -80 & wrist_decenv_sync <= 80)
+df_envdec_sync_w <- subset(df_envdec_sync_w, wrist_f0_decenvpeak != 0)
+# you can save it
+write.csv(df_envdec_sync_w, paste0(datasets, "dataset_env_dec.csv"), row.names = FALSE)
+
+# f0 and dec in wrist with synchrony lower/higher than +-80
+df_f0dec_sync_w <- subset(kin_wrist, wrist_decf0_sync >= -80 & wrist_decf0_sync <= 80)
+# you can save it
+write.csv(df_f0dec_sync_w, paste0(datasets, "dataset_f0_dec.csv"), row.names = FALSE)
+
+## Note that we do not filter out outliers before saving datasets for statistical analysis. They are removed in script with statistical analysis
+
+```
+
+## Data wrangling and annotation
+
+We detect outliers using function outlierKD that removes them by Tukey rules on quartiles +/- 1.5 IQR. This code should be run in the console, because the function prompts the user to answer whether they wish to remove the outliers or not.
+
+```{r outliers and synchrony annotation, include=FALSE, echo=FALSE, message=FALSE, warning = FALSE}
+
+#Function
+#source("http://goo.gl/UUyEzD")
+# in the form of outlierKD(f0_dec, wrist_f0peak_dec)
+outlierKD <- function(dt, var) {
+     var_name <- eval(substitute(var),eval(dt))
+     na1 <- sum(is.na(var_name))
+     m1 <- mean(var_name, na.rm = T)
+     par(mfrow=c(2, 2), oma=c(0,0,3,0))
+     boxplot(var_name, main="With outliers")
+     hist(var_name, main="With outliers", xlab=NA, ylab=NA)
+     outlier <- boxplot.stats(var_name)$out
+     mo <- mean(outlier)
+     var_name <- ifelse(var_name %in% outlier, NA, var_name)
+     boxplot(var_name, main="Without outliers")
+     hist(var_name, main="Without outliers", xlab=NA, ylab=NA)
+     title("Outlier Check", outer=TRUE)
+     na2 <- sum(is.na(var_name))
+     cat("Outliers identified:", na2 - na1, "n")
+     cat("Propotion (%) of outliers:", round((na2 - na1) / sum(!is.na(var_name))*100, 1), "n")
+     cat("Mean of the outliers:", round(mo, 2), "n")
+     m2 <- mean(var_name, na.rm = T)
+     cat("Mean without removing outliers:", round(m1, 2), "n")
+     cat("Mean if we remove outliers:", round(m2, 2), "n")
+     response <- readline(prompt="Do you want to remove outliers and to replace with NA? [yes/no]: ")
+     if(response == "y" | response == "yes"){
+          dt[as.character(substitute(var))] <- invisible(var_name)
+          assign(as.character(as.list(match.call())$dt), dt, envir = .GlobalEnv)
+          cat("Outliers successfully removed", "n")
+          return(invisible(dt))
+     } else{
+          cat("Nothing changed", "n")
+          return(invisible(var_name))
+     }
+}
+
+# We remove outliers for each dataset and both two variables under study
+
+## ENV-ACC
+
+outlierKD(df_envacc_sync_w, wrist_envpeak_acc)
+#Outliers identified: 102 
+#Propotion (%) of outliers: 4.3
+#Mean of the outliers: 0.33 
+#Mean without removing outliers: 0.12 
+#Mean if we remove outliers: 0.11 
+
+
+outlierKD(df_envacc_sync_w, wrist_apeak)
+# Outliers identified: 102 from 2523 observations
+# Proportion (%) of outliers: 4.04280618311534
+# Mean of the outliers: 0.00341494510039303
+# Mean without removing outliers: 0.000397982711192951
+# Mean if we remove outliers: 0.000270874010780556
+
+## F0-ACC
+
+outlierKD(df_f0acc_sync_w, wrist_f0peak_acc)
+# Outliers identified: 33 from 3716 observations
+# Proportion (%) of outliers: 0.88805166846071
+# Mean of the outliers: 396.42739313299
+# Mean without removing outliers: 214.004514261006
+# Mean if we remove outliers: 212.369989416375
+
+outlierKD(df_f0acc_sync_w, wrist_apeak)
+# Outliers identified: 180 from 3716 observations
+# Proportion (%) of outliers: 4.84391819160388
+# Mean of the outliers: 0.00383593424887135
+# Mean without removing outliers: 0.000433160745562418
+# Mean if we remove outliers: 0.000259942637362302
+
+## ENV-DEC
+
+outlierKD(df_envdec_sync_w, wrist_envpeak_dec)
+# Outliers identified: 53 from 2020 observations
+# Proportion (%) of outliers: 2.62376237623762
+# Mean of the outliers: 0.325935734950095
+# Mean without removing outliers: 0.113624100107377
+# Mean if we remove outliers: 0.107903451075011
+
+outlierKD(df_envdec_sync_w, wrist_decpeak)
+# Outliers identified: 86 from 2020 observations
+# Proportion (%) of outliers: 4.25742574257426
+# Mean of the outliers: -0.00433907989590748
+# Mean without removing outliers: -0.000517174486955191
+# Mean if we remove outliers: -0.000347224194726703
+
+
+## F0-DEC
+
+outlierKD(df_f0dec_sync_w, wrist_f0peak_dec)
+# Outliers identified: 10 from 3694 observations
+# Proportion (%) of outliers: 0.270709258256632
+# Mean of the outliers: 382.472775268555
+# Mean without removing outliers: 209.680863791953
+# Mean if we remove outliers: 209.211830373178
+
+outlierKD(df_f0dec_sync_w, wrist_decpeak)
+# Outliers identified: 187 from 3694 observations
+# Proportion (%) of outliers: 5.06226312939903
+# Mean of the outliers: -0.0038963242410942
+# Mean without removing outliers: -0.000519162602943341
+# Mean if we remove outliers: -0.000339085834670113
+
+
+```
+
+We also want to annotate the dataset with synchrony information.
+```{r synchrony information, echo=TRUE, message=FALSE, warning = FALSE}
+
+### if sync value is negative - kinematic peak leads the acoustic peak
+### if sync value is positive - kinematic peak follows the acoustic peak
+### if the sync value is between -25 and +25 - acoustic and kinematic peaks are closely synced
+
+## ENV-ACC
+df_envacc_sync_w$peak_sync <- NA
+df_envacc_sync_w$peak_sync <- ifelse(df_envacc_sync_w$wrist_accenv_sync < -25, 'kpeak leads', ifelse(df_envacc_sync_w$wrist_accenv_sync >= -25 & df_envacc_sync_w$wrist_accenv_sync <= 25, 'closely synced', 'kpeak follows'))
+
+## F0-ACC
+df_f0acc_sync_w$peak_sync <- NA
+df_f0acc_sync_w$peak_sync <- ifelse(df_f0acc_sync_w$wrist_accf0_sync < -25, 'kpeak leads', ifelse(df_f0acc_sync_w$wrist_accf0_sync >= -25 & df_f0acc_sync_w$wrist_accf0_sync <= 25, 'closely synced', 'kpeak follows'))
+
+## ENV-DEC
+df_envdec_sync_w$peak_sync <- NA
+df_envdec_sync_w$peak_sync <- ifelse(df_envdec_sync_w$wrist_decenv_sync < -25, 'kpeak leads', ifelse(df_envdec_sync_w$wrist_decenv_sync >= -25 & df_envdec_sync_w$wrist_decenv_sync <= 25, 'closely synced', 'kpeak follows'))
+
+## F0-DEC
+df_f0dec_sync_w$peak_sync <- NA
+df_f0dec_sync_w$peak_sync <- ifelse(df_f0dec_sync_w$wrist_decf0_sync < -25, 'kpeak leads', ifelse(df_f0dec_sync_w$wrist_decf0_sync >= -25 & df_f0dec_sync_w$wrist_decf0_sync <= 25, 'closely synced', 'kpeak follows'))
+
+```
+
+
+## Explorative plotting
+
+Note that we do not display most of the plots because the output is dependent on the outlier function that works only if used in the console.
+
+1. Kinematic peak: acceleration
+
+Acceleration-envelope
+```{r wrist acc-env plot, echo=TRUE, message=FALSE, warning = FALSE}
+
+# let's get a normalized amplitude envelope values
+df_envacc_sync_w$wrist_envpeak_acc_norm <- NA
+df_envacc_sync_w$wrist_envpeak_acc_norm <- ave(df_envacc_sync_w$wrist_envpeak_acc, df_envacc_sync_w$speaker, FUN = function(x) scale(x, center = FALSE, scale = TRUE))
+
+# this is a basic plot exploring relationship between acceleration and amplitude envelope
+# note that we multiply acceleration by *100*200 to get to cm/s^2
+
+
+plot_envacc_w <- ggplot(df_envacc_sync_w, aes(x = wrist_apeak*100*200, y = wrist_envpeak_acc_norm))+
+  geom_point(size = 0.5, alpha = 0.5)+
+  geom_smooth(method=lm)+
+  theme_bw() +  
+  theme(text = element_text(size = 7))
+
+# some plots coloured by different features
+## coloured by speaker
+plot_envacc_w_all <- plot_envacc_w + facet_wrap(~sp_rate*speaker, ncol=11)
+## coloured by rhyme
+plot_envacc_w_rhyme <- plot_envacc_w + facet_wrap(~rhyme, ncol=6)
+## coloured by pointing direction
+plot_envacc_w_dir <- plot_envacc_w + facet_wrap(~point_direct, ncol=2)
+## coloured by speech rate
+plot_envacc_w_rate <- plot_envacc_w + facet_wrap(~sp_rate, ncol=2)
+
+```
+
+Acceleration-f0
+```{r wrist acc-f0 plot, echo=TRUE, message=FALSE, warning = FALSE}
+
+# this is a basic plot exploring relationship between acceleration and f0
+# note that we multiply acceleration by *100*200 to get to cm/s^2
+
+plot_f0acc_w <- ggplot(df_f0acc_sync_w, aes(x = wrist_apeak*100*200, y = wrist_f0peak_acc))+
+  geom_point(size = 0.5, alpha = 0.5)+
+  geom_smooth(method=lm)+
+  theme_bw() +  
+  theme(text = element_text(size = 7))
+
+# some plots coloured by different features
+## coloured by speaker
+plot_f0cc_w_all <- plot_f0acc_w + facet_wrap(~sp_rate*speaker, ncol=11)
+## coloured by rhyme
+plot_f0acc_w_rhyme <- plot_f0acc_w + facet_wrap(~rhyme, ncol=6)
+## coloured by pointing direction
+plot_f0acc_w_dir <- plot_f0acc_w + facet_wrap(~point_direct, ncol=2)
+## coloured by speech rate
+plot_f0acc_w_rate <- plot_f0acc_w + facet_wrap(~sp_rate, ncol=2)
+
+```
+
+2. Kinematic peak: deceleration
+
+Deceleration-envelope - **This plot we used in the paper**
+```{r wrist dec-env plot, echo=TRUE, message=FALSE, warning = FALSE}
+
+# let's get a normalized amplitude envelope values
+df_envdec_sync_w$wrist_envpeak_dec_norm <- NA
+df_envdec_sync_w$wrist_envpeak_dec_norm <- ave(df_envdec_sync_w$wrist_envpeak_dec, df_envdec_sync_w$speaker, FUN = function(x) scale(x, center = FALSE, scale = TRUE))
+
+## for esthetic reasons, we want to get rid of the underscore
+df_envdec_sync_w$point_direct <- ifelse(df_envdec_sync_w$point_direct == 'backward_movement', 'backward movement', 'forward movement')
+
+# this is a basic plot exploring relationship between deceleration and envelope
+# note that we multiply acceleration by *100*200 to get to cm/s^2
+# we use both lm and loess for capturing possible non-linearity
+
+plot_decenv_w <- ggplot(df_envdec_sync_w, aes(x = wrist_decpeak*100*200, y = wrist_envpeak_dec_norm))+
+  geom_point(size = 0.5, alpha = 0.5, color = 'black')+
+  geom_smooth(method=loess, color = 'black', linetype = 'dashed', linewidth = 0.4, fill = 'gray', alpha = 0.5)+
+  geom_smooth(method=lm, color = 'red', linewidth = 2, fill = 'red')+
+  labs(x = "Deceleration peak, wrist (cm/s^2)", y = "Amplitude envelope peak (normalized)")+
+  theme_cowplot(12)+
+  scale_x_reverse(labels = abs)+
+  ylim(0.25,1.5)+
+  theme(title = element_text(size = 10), text = element_text(family = "times"))
+
+# distinguishing by different feature
+
+plot_decenv_w_all <- plot_decenv_w + facet_wrap(~sp_rate*speaker, ncol=11) # per trial
+plot_decenv_w_speaker <- plot_decenv_w + facet_wrap(~speaker, ncol=6) # per speaker
+plot_decenv_w_rhyme <- plot_decenv_w + facet_wrap(~rhyme, ncol=6) # per rhyme
+plot_decenv_w_rate <- plot_decenv_w + facet_wrap(~sp_rate, ncol=2) # per speech rate
+
+
+
+### this plot we use in paper
+plot_decenv_w_dir <- plot_decenv_w + facet_wrap(~point_direct, ncol=2) # per movement direction
+
+## save it
+ggsave(file.path(plots, "decenv_plot.png"), dpi = 300)
+ggsave(file.path(plots, "decenv_plot.jpg"), dpi = 300)
+
+
+```
+
+Deceleration-f0
+```{r wrist dec-f0 plot, echo=TRUE, message=FALSE, warning = FALSE}
+
+# this is a basic plot exploring relationship between deceleration and f0
+# note that we multiply acceleration by *100*200 to get to cm/s^2
+plot_decf0_w <- ggplot(df_f0dec_sync_w, aes(x = wrist_decpeak*100*200, y = wrist_f0peak_dec))+
+  geom_point(size = 0.5, alpha = 0.5)+
+  geom_smooth(method=lm)+
+  theme_bw() +  
+  theme(text = element_text(size = 7))+
+  scale_x_reverse(labels = abs)
+
+# distinguishing by different feature
+
+plot_decf0_w_all <- plot_decf0_w + facet_wrap(~sp_rate*speaker, ncol=11) # per speaker
+plot_decf0_w_rhyme <- plot_decf0_w + facet_wrap(~rhyme, ncol=6) # per rhyme
+plot_decf0_w_dir <- plot_decf0_w + facet_wrap(~point_direct, ncol=2) # per pointing direction
+plot_decf0_w_rate <- plot_decf0_w + facet_wrap(~sp_rate, ncol=2) # per speech rate
+
+```
+
+
+## Plotting time series
+
+Preparation of timeseries for plotting
+```{r time series plot preparation, echo=TRUE, message=FALSE, warning = FALSE}
+
+## normalizing the envelope
+timeseries$env_norm <- ave(timeseries$env, timeseries$speaker, FUN = function(x) scale(x, center = FALSE, scale = TRUE)) 
+
+# sample - ppn 5, normal speech rate, right hand, entliczek
+sam <- subset(timeseries, speaker == '5' & point_hand == '_R' & rhyme_name == 'ent' & speech_rate == 'normal')
+sam_peaks <- subset(kin_wrist, speaker == '5' & point_hand == '_R' & rhyme == 'ent' & sp_rate == 'normal')
+
+```
+
+This chunk creates plot with example of amplitude envelope, F0 and acceleration time series (first 3.4 seconds from the onset of speech).
+There are two plots with acceleration and 1) amplitude envelope, and 2) F0. There are also two smaller zoomed plots that introduce the peaks under study. 
+```{r time series plot, echo=TRUE, message=FALSE, warning = FALSE}
+
+beauty_colors <- brewer.pal(6, 'Set1') #produce 6 nice diverging colors
+
+######### F0 - ACCELERATION
+
+#let's not have 0 values in the plot, just have gaps of none-voicing
+sam$f0 <- ifelse(sam$f0==0, NA, sam$f0)
+
+# let's change unit of acceleration to cm/s^2
+sam$a_wrist <- sam$a_wrist*100*200
+
+#for setting the correct ranges to be used as a second axes
+  # https://stackoverflow.com/questions/3099219/ggplot-with-2-y-axes-on-each-side-and-different-scales
+ylim.f <- range(sam$f0[!is.na(sam$f0)])
+ylim.a <- range(sam$a_wrist)  
+
+b <- diff(ylim.f)/diff(ylim.a ) #scaling  factor b of the differences in ranges
+a <- ylim.f[1] - b*ylim.a[1]
+
+# plotting
+
+f0acc <- ggplot(sam, aes(x = time_ms)) +
+  geom_path(aes(y = f0), color = beauty_colors[1], linewidth = 1) +
+  geom_path(aes(y = a+a_wrist*b), color = beauty_colors[2], linewidth = 1.) +
+  geom_rect(aes(xmin = 4100, xmax = 4450, ymin = 150, ymax = 400), color = 'black', linetype='dashed', alpha = 0)+ # for dashed-lined area that is zoomed in next plot
+  theme_cowplot(12)+ scale_colour_brewer(palette = "Set1")+ theme(
+    axis.title.y.left = element_text(color = beauty_colors[1]),
+    axis.text.y.left = element_text(color = beauty_colors[1]),
+    axis.title.y.right = element_text(color = beauty_colors[2]),
+    axis.text.y.right = element_text(color = beauty_colors[2]))+
+  scale_y_continuous(
+    "F0 (Hz)", 
+    sec.axis = sec_axis(~ (. - a)/b, name = "acceleration (cm/s^2)")
+  )+ labs(x = '')+
+  xlim(2543,6000)+
+  theme(title = element_text(size = 10), text = element_text(family = "times"))
+
+
+####### ENVELOPE - ACCELERATION
+
+#for setting the correct ranges to be used as a second axes
+ylim.env <- range(sam$env)
+ylim.acc <- range(sam$a_wrist)  
+
+bb <- diff(ylim.env)/diff(ylim.acc ) #scaling  factor b of the differences in ranges
+aa <- ylim.env[1] - bb*ylim.acc[1]
+
+## plotting 
+
+envacc <- ggplot(sam, aes(x = time_ms)) +
+  geom_path(aes(y = env), color = beauty_colors[3], linewidth = 1) +
+  geom_path(aes(y = aa+a_wrist*bb), color = beauty_colors[2], linewidth = 1.) +
+  geom_rect(aes(xmin = 4100, xmax = 4450, ymin = 0, ymax = 0.15), color = 'black', linetype='dashed', alpha = 0)+ # for dashed-lined area that is zoomed in next plot
+  theme_cowplot(12)+ scale_colour_brewer(palette = "Set1")+ theme(
+    axis.title.y.left = element_text(color = beauty_colors[3]),
+    axis.text.y.left = element_text(color = beauty_colors[3]),
+    axis.title.y.right = element_text(color = beauty_colors[2]),
+    axis.text.y.right = element_text(color = beauty_colors[2]))+
+  scale_y_continuous(
+    "amplitude envelope", 
+    sec.axis = sec_axis(~ (. - aa)/bb, name = "acceleration (cm/s^2)")
+  ) + xlab('time (ms)')+
+  xlim(2543,6000)+
+  theme(title = element_text(size = 10), text = element_text(family = "times"))
+
+
+## we also create plots for enlarged sections with peaks description
+
+## xintercepts
+
+wenv_peaks_time <- sam_peaks$wrist_envpeak_acc_time
+wacc_peaks_time <- sam_peaks$wrist_apeak_time
+wdec_peaks_time <- sam_peaks$wrist_decpeak_time
+wacc_peaks <- sam_peaks$wrist_apeak
+wf0_peaks_time <- sam_peaks$wrist_f0peak_acc_time
+
+## F0-ACC ZOOM
+### Note that xintercepts-peaks are multiplied by 100*200 to get acceleration to cm/s^2
+
+f0acc_zoom <- ggplot(sam, aes(x = time_ms)) +
+  geom_path(aes(y = f0), color = beauty_colors[1], linewidth = 1.5) +
+  geom_path(aes(y = a+a_wrist*b), color = beauty_colors[2], linewidth = 1.5) +
+  geom_vline(xintercept = wacc_peaks_time, color = beauty_colors[2], linetype = 'solid', linewidth = 1)+
+  geom_vline(xintercept = wdec_peaks_time, color = beauty_colors[4], linetype = 'solid', linewidth = 1)+
+  geom_vline(xintercept = wf0_peaks_time, color = beauty_colors[1], linetype = 'solid', linewidth = 1)+
+  geom_point(data = sam_peaks, aes(x = wrist_apeak_time, y = a+wrist_apeak*b*100*200), color = beauty_colors[2], size = 5) +
+  geom_text(data = sam_peaks, aes(x = wrist_apeak_time, y =  a+wrist_apeak*b*100*200, label = 'A'))+
+  geom_point(data = sam_peaks, aes(x = wrist_decpeak_time, y = a+wrist_decpeak*b*100*200), color = beauty_colors[4], size = 5) +
+  geom_text(data = sam_peaks, aes(x = wrist_decpeak_time, y =  a+wrist_decpeak*b*100*200, label = 'B'))+
+  geom_point(data = sam_peaks, aes(x = wrist_f0peak_acc_time , y = wrist_f0peak_acc), color = beauty_colors[1], size = 5) +
+  geom_text(data = sam_peaks, aes(x = wrist_f0peak_acc_time, y = wrist_f0peak_acc, label = 'C'))+
+  theme_cowplot(12)+ scale_colour_brewer(palette = "Set1")+
+  scale_y_continuous(
+    "", 
+    sec.axis = sec_axis(~ (. - a)/b, name = "")
+  )+ labs(x = '')+
+  xlim(4100,4450)
+
+## let's get rid of all legends and axis descriptions
+
+f0acc_z <- f0acc_zoom + 
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.y.left = element_blank(),
+    axis.text.y.left = element_blank(),
+    axis.ticks.y.left = element_blank(),
+    axis.title.y.right = element_blank(),
+    axis.text.y.right = element_blank(),
+    axis.ticks.y.right = element_blank()
+  )
+
+## ENV-ACC ZOOM
+### Note that xintercepts-peaks are multiplied by 100*200 to get acceleration to cm/s^2
+
+envacc_zoom <- ggplot(sam, aes(x = time_ms)) +
+  geom_path(aes(y = env), color = beauty_colors[3], linewidth = 1.5) +
+  geom_path(aes(y = aa+a_wrist*bb), color = beauty_colors[2], linewidth = 1.5) +
+  geom_vline(xintercept = wacc_peaks_time, color = beauty_colors[2], linetype = 'solid', linewidth = 1)+
+  geom_vline(xintercept = wdec_peaks_time, color = beauty_colors[4], linetype = 'solid', linewidth = 1)+
+  geom_vline(xintercept = wenv_peaks_time, color = beauty_colors[3], linetype = 'solid', linewidth = 1)+
+  geom_point(data = sam_peaks, aes(x = wrist_apeak_time , y = aa+wrist_apeak*bb*100*200), color = beauty_colors[2], size = 5) +
+  geom_text(data = sam_peaks, aes(x = wrist_apeak_time, y = aa+wrist_apeak*bb*100*200, label = 'A'))+
+  geom_point(data = sam_peaks, aes(x = wrist_decpeak_time, y = aa+wrist_decpeak*bb*100*200), color = beauty_colors[4], size = 5) +
+  geom_text(data = sam_peaks, aes(x = wrist_decpeak_time, y =  aa+wrist_decpeak*bb*100*200, label = 'B'))+
+  geom_point(data = sam_peaks, aes(x = wrist_envpeak_acc_time , y = wrist_envpeak_acc), color = beauty_colors[3], size = 5) +
+  geom_text(data = sam_peaks, aes(x = wrist_envpeak_acc_time, y = wrist_envpeak_acc, label = 'D'))+
+  theme_cowplot(12)+ scale_colour_brewer(palette = "Set1")+ theme(
+    axis.title.y.left = element_text(color = beauty_colors[3]),
+    axis.text.y.left = element_text(color = beauty_colors[3]),
+    axis.title.y.right = element_text(color = beauty_colors[2]),
+    axis.text.y.right = element_text(color = beauty_colors[2]))+
+  scale_y_continuous(
+    "", 
+    sec.axis = sec_axis(~ (. - aa)/bb, name = "")
+  ) + xlab('')+
+  xlim(4100,4450)
+
+## get rid of descriptions
+envacc_z <- envacc_zoom + 
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.y.left = element_blank(),
+    axis.text.y.left = element_blank(),
+    axis.ticks.y.left = element_blank(),
+    axis.title.y.right = element_blank(),
+    axis.text.y.right = element_blank(),
+    axis.ticks.y.right = element_blank()
+  )
+
+
+## Now let's put it together
+
+# Arrange the plots in a grid with two rows and two columns
+timeseries <- grid.arrange(f0acc, f0acc_z, envacc, envacc_z, 
+             widths = c(0.7, 1/3))
+
+# save it 
+ggsave(file.path(plots, "timeseries.eps"), plot = timeseries, device = "eps")
+
+```

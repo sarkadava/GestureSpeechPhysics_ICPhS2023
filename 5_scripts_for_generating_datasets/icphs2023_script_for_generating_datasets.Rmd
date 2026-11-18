@@ -1,0 +1,704 @@
+---
+title: "Is gesture-speech physics at work in rhythmic pointing? Evidence from Polish counting-out rhymes"
+author: "Šárka Kadavá, Aleksandra Ćwiek, Katarzyna Stoltmann, Susanne Fuchs, Wim Pouw"
+date: "2023-04-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+This script generates dataset for statistical analyses for ICPhS paper *Šárka Kadavá, Aleksandra Ćwiek, Katarzyna Stoltmann, Susanne Fuchs, Wim Pouw, Is gesture-speech physics at work in rhythmic pointing? Evidence from Polish counting-out rhymes, Proceedings of ICPhS.*
+
+# Loading in the folders and setup 
+```{r folderload, echo = TRUE, message=FALSE, warning = FALSE}
+
+################# folders ####################
+
+dataOK <- c("vp11", "vp9", "vp8", "vp6", "vp5", "vp4", "vp3", "vp1")
+
+#current folder (first go to session -> set working directory -> to source file location)
+parentfolder <- dirname(getwd())
+
+#list the folders
+
+datamerged    <- paste0(parentfolder, '/4_merged_data/')
+datasets      <- paste0(parentfolder, '/6_datasets_for_exploration_and_plots/')
+
+
+#################### packages ####################
+
+library(dplR) # for data wrangling
+library(rstudioapi) # relative foldering
+library(stringr) # string manipulation
+library(readr) # string manipulation
+library(zoo) #time series functions
+library(pracma) #time series functions
+library(dplyr) #data summurization
+
+```
+
+
+# Collecting datasets
+
+In the following chunks, several datasets are being collected from the kinematic-acoustic timeseries. 
+1. Peak dataset
+2. Timeseries
+  + movement data
+  + reading condition
+
+## 1 Peak dataset 
+This dataset consist off several kinematic peaks and their relative acoustic peaks, for both finger and wrist.
+The kinematic peaks are those:
+* movement coordinates
+* velocity
+* acceleration
+* deceleration
+
+The acoustic peaks are found as relative to each of those peaks (the one that are closest in time), and includes:
+* amplitude envelope
+* envelope attack (slope)
+* F0
+
+*Note that we collect acoustic peaks relative to each kinematic peak, i.e., each kinematic peak has its own relative acoustic peaks*
+
+*Also note that acoustic peaks are retrieved outside of gesture phases to ensure that we capture peaks that happens also before or after but relates to the kinematic peak of the gesture phase.*
+
+This is a **function that generates acoustic peaks relative to respective kinematic peak**
+```{r function to generate peak info, echo = TRUE, message=FALSE, warning = FALSE}
+
+      generatesyncinfo <- function(speechpeaks_time, kinpeaks_time, speechpeak_values)
+      {
+        closest_peak        <- which.min(abs(speechpeaks_time-kinpeaks_time))  # smallest time difference between acoustic                                                                                and kinematic peak
+        mov_sppeak        <- speechpeak_values[closest_peak]                 # nearest peak of speech peak, relative to                                                                                 kinpeak
+        mov_sppeak_t      <- speechpeaks_time[closest_peak]                       # time of the speech peak
+        mov_speech_sync   <- kinpeaks_time - mov_sppeak_t            # difference between timing of acoustic and                                                                              kinematic peak (i.e. synchrony)
+        results <- c(closest_peak, mov_sppeak, mov_sppeak_t, mov_speech_sync)
+        return(results)
+      }
+
+# the function returns matrix of 4 values
+      ## [1] index of acoustic peak that is closest to the kinematic peak in time 
+      ## [2] value of the acoustic peak
+      ## [3] time of the acoustic peak
+      ## [4] what is the time difference between acoustic and kinematic peak, i.e., synchrony
+          ## when synchrony + -> acoustic peak preceeds kinematic peak
+          ## when synchrony - -> acoustic peak follows kinematic peak
+
+```
+
+This chunk generates the dataset by looping over individual files and gesture phases
+```{r dataset kinematics and peaks for finger and wrist, echo = TRUE, message=FALSE, warning = FALSE}
+
+############# variables ###############
+## these are the variables and matrices we are going to collect in the loop
+
+f_movpeak <- f_movpeak_t <- f_velpeak <- f_velpeak_t <- f_accpeak <- f_accpeak_t <- f_decpeak <- f_decpeak_t <- f_envmov <- f_attmov <- f_f0mov <- fmov_f0_envpeak <- f_envvel <- f_attvel <- f_f0vel <- fvel_f0_envpeak <- f_envacc <- f_attacc <- f_f0acc <- facc_f0_envpeak <- f_envdec <- f_attdec <- f_f0dec <- fdec_f0_envpeak <- w_movpeak <- w_movpeak_t <- w_velpeak <- w_velpeak_t <- w_accpeak <- w_accpeak_t <- w_decpeak <- w_decpeak_t <- w_envmov <- w_attmov <- w_f0mov <- wmov_f0_envpeak <- w_envvel <- w_attvel <- w_f0vel <- wvel_f0_envpeak <- w_envacc <- w_attacc <- w_f0acc <- wacc_f0_envpeak <- w_envdec <- w_attdec <- w_f0dec <- wdec_f0_envpeak <- syllab_env_num <- numeric()
+
+spkr <- hnd <- sp_rt <- drctn <- rhm <- syllab_env <- character()
+
+## there are the variables that we want to have ina dataset
+fing_mpeak <- fing_mpeak_time <- fing_vpeak <- fing_vpeak_time <- fing_apeak <- fing_apeak_time <- fing_envpeak_acc <- fing_envpeak_acc_time <- fing_accenv_sync <- fing_attpeak_acc <- fing_attpeak_acc_time <- fing_accatt_sync <- fing_f0peak_acc <- fing_f0peak_acc_time <- fing_accf0_sync <- fing_decpeak <- fing_decpeak_time <- fing_envpeak_dec <- fing_envpeak_dec_time <- fing_decenv_sync <- fing_attpeak_dec <- fing_attpeak_dec_time <- fing_decatt_sync <- wrist_mpeak <- wrist_mpeak_time <- wrist_vpeak <- wrist_vpeak_time <- wrist_apeak <- wrist_apeak_time <- wrist_envpeak_acc <- wrist_envpeak_acc_time <- wrist_accenv_sync <- wrist_attpeak_acc <- wrist_attpeak_acc_time <- wrist_accatt_sync <- wrist_decpeak <- wrist_decpeak_time <- wrist_envpeak_dec <- wrist_envpeak_dec_time <- wrist_decenv_sync <- wrist_attpeak_dec <- wrist_attpeak_dec_time <- wrist_decatt_sync <- fing_f0peak <- fing_f0peak_time <- fing_accf0_sync <-  fing_f0peak_dec <- fing_f0peak_dec_time <- fing_decf0_sync <- wrist_f0peak_acc <- wrist_f0peak_acc_time <- wrist_accf0_sync <- wrist_f0peak_dec <- wrist_f0peak_dec_time <- wrist_decf0_sync <- fing_envpeak_m <- fing_envpeak_m_time <- fing_movenv_sync <- fing_attpeak_m <- fing_attpeak_m_time <- fing_movatt_sync <- fing_f0peak_m <- fing_f0peak_m_time <- fing_movf0_sync <- fing_envpeak_vel <- fing_envpeak_vel_time <- fing_velenv_sync <- fing_attpeak_vel <- fing_attpeak_vel_time <- fing_velatt_sync <- fing_f0peak_vel <- fing_f0peak_vel_time <-  fing_velf0_sync <- wrist_envpeak_m <- wrist_envpeak_m_time <- wrist_movenv_sync <- wrist_attpeak_m <- wrist_attpeak_m_time <- wrist_movatt_sync <- wrist_f0peak_m <- wrist_f0peak_m_time <- wrist_movf0_sync <- wrist_envpeak_vel <- wrist_envpeak_vel_time <- wrist_velenv_sync <- wrist_attpeak_vel <- wrist_attpeak_vel_time <- wrist_velatt_sync <- wrist_f0peak_vel <- wrist_f0peak_vel_time <-  wrist_velf0_sync <- wrist_f0_accenvpeak <- wrist_f0_decenvpeak <- wrist_f0_movenvpeak <- wrist_f0_velenvpeak <- fing_f0_movenvpeak <- fing_f0_velenvpeak <- fing_f0_accenvpeak <- fing_f0_decenvpeak <-env_syllable_num <- numeric()
+
+speaker <- point_hand <- sp_rate <- rhyme <- point_direct <- env_syllable <- character()
+
+########## collecting peaks ###############
+
+### looping over individual files
+
+merged_files <- list.files(datamerged, pattern = "*.csv") # list of files from the environment
+
+for(f in merged_files){
+  mf <- read.csv(paste0(datamerged, f))
+  mf$condition_speech <- as.factor(mf$condition_speech) 
+
+  if(unique(mf$condition_speech) == "motion_speech"){ # loop only through motion + speech files (not reading)
+
+# matrix of acoustic peaks within trials, looping outside of gesture phases because acoustic peak might follow just after (or before)
+        
+    # amplitude envelope peaks
+    envpeakob         <- findpeaks(mf$env, minpeakheight = mean(mf$env)-(1*sd(mf$env))) 
+    # findpeaks creates matrix with column 1 = value, column 2 = index
+    envpeaks_indices  <- envpeakob[,2] 
+    envpeaks_values   <- envpeakob[,1]
+    envpeaks_time     <- mf$time_ms[envpeaks_indices]
+    
+    #f0peaks values at envpeak (if f0 = 0 in envpeak, it's not envpeak)
+    F0_envpeaks       <- mf$F0[envpeaks_indices] 
+    
+    # attack (slope of amplitude envelope) peaks
+    attpeakob         <- findpeaks(c(0, diff(mf$env)), minpeakheight = 0) 
+    attpeaks_indices  <- attpeakob[,2]
+    attpeaks_values   <- attpeakob[,1]
+    attpeaks_time     <- mf$time_ms[attpeaks_indices]
+    
+    # f0 peaks
+    f0peaksob         <- findpeaks(mf$F0, minpeakheight = mean(mf$F0)-(1*sd(mf$F0)))
+    f0peaks_indices   <- f0peaksob[,2]
+    f0peaks_values    <- f0peaksob[,1]
+    f0peaks_time      <- mf$time_ms[f0peaks_indices]
+    
+    # center the movement so we can differentiate between - a + values when looking for peaks
+    mf$cntr_mov_f       <- mf$z_fing - mean(mf$z_fing)
+    mf$cntr_mov_w       <- mf$z_wrist - mean(mf$z_wrist)
+    
+    ### gesture-phase looping
+    
+    gesture_phs  <- unique(na.omit(mf$gesture_phases)) 
+
+    for(phase in gesture_phs)
+      {
+      submf <- mf[mf$gesture_phases == phase, ] #select a portion of the merged time series
+      submf <- na.trim(submf) #because there are NA's at the beginning of phases we ignore NA' selected values
+      
+      # Collect one value for this iteration
+      
+      ###### FINGER
+      # 1 MOVEMENT
+      ## if the movement is forward look for max value, 
+      if(unique(submf$movementdirection) == 'forward_movement'){f_movpeak   <- max(submf$cntr_mov_f)}
+      # if the movement is backward, look for min value
+      if(unique(submf$movementdirection) == 'backward_movement'){f_movpeak  <- min(submf$cntr_mov_f)}
+      
+      ## time of the peak accordingly
+      if(unique(submf$movementdirection) == 'forward_movement'){f_movpeak_t <- submf$time_ms[which.max(submf$cntr_mov_f)]}
+      if(unique(submf$movementdirection) == 'backward_movement'){f_movpeak_t <- submf$time_ms[which.min(submf$cntr_mov_f)]}
+      
+      # 1.1  synchrony information finger movement and envelope amplitude
+      f_envmov          <- generatesyncinfo(envpeaks_time, f_movpeak_t, envpeaks_values)
+      # this function generates 4 values
+        ## [1] index of acoustic peak that is closest to the kinematic peak in time 
+        ## [2] value of the acoustic peak
+        ## [3] time of the acoustic peak
+        ## [4] what is the time difference between acoustic and kinematic peak, i.e., synchrony
+      
+      # what is the value of f0 in the env peak? (if 0, later omitted)
+      fmov_f0_envpeak   <- F0_envpeaks[f_envmov[1]] # indexing closest timing
+
+      #1.2. generate synchrony information finger movement and envelope amplitude (slope)
+      f_attmov          <- generatesyncinfo(attpeaks_time, f_movpeak_t, attpeaks_values)
+      
+      #1.3. generate synchrony information finger movement and F0
+      f_f0mov           <- generatesyncinfo(f0peaks_time, f_movpeak_t, f0peaks_values)
+      
+      #2 VELOCITY
+      f_velpeak         <- max(submf$speed_fing)
+      f_velpeak_t       <- submf$time_ms[which.max(submf$speed_fing)]
+      
+      #2.1. generate synchrony information finger velocity and envelope
+      f_envvel          <- generatesyncinfo(envpeaks_time, f_velpeak_t, envpeaks_values)
+      
+      # what is the value of f0 in the env peak? (if 0, later omitted)
+      fvel_f0_envpeak   <- F0_envpeaks[f_envvel[1]] 
+      
+      ## 2.2 generate synchrony information finger velocity and attack
+      f_attvel          <- generatesyncinfo(attpeaks_time, f_velpeak_t, attpeaks_values)
+      
+      ## 2.3. generate synchrony information finger velocity and F0
+      f_f0vel           <- generatesyncinfo(f0peaks_time, f_velpeak_t, f0peaks_values)
+      
+      # 3 ACCELERATION 
+      f_accpeak         <- max(submf$acc_fing) 
+      f_accpeak_t       <- submf$time_ms[which.max(submf$acc_fing)]
+      
+      ## 3.1. generate synchrony information finger acceleration and envelope
+      f_envacc          <- generatesyncinfo(envpeaks_time, f_accpeak_t, envpeaks_values)
+      
+      # what is the value of f0 in the env peak? (if 0, later omitted)
+      facc_f0_envpeak   <- F0_envpeaks[f_envacc[1]] 
+      
+      ## 3.2. generate synchrony information finger acceleration and envelope attack
+      f_attacc          <- generatesyncinfo(attpeaks_time, f_accpeak_t, attpeaks_values)
+      
+      ## 3.3. generate synchrony information finger acceleration and F0
+      f_f0acc           <- generatesyncinfo(f0peaks_time, f_accpeak_t, f0peaks_values)
+      
+      # 4 DECELERATION 
+      f_decpeak         <- min(submf$acc_fing) 
+      f_decpeak_t       <- submf$time_ms[which.min(submf$acc_fing)]
+      
+      ## 4.1. generate synchrony information finger deceleration and envelope
+      f_envdec          <- generatesyncinfo(envpeaks_time, f_decpeak_t, envpeaks_values)
+      
+      # what is the value of f0 in the env peak? (if 0, later omitted)
+      fdec_f0_envpeak   <- F0_envpeaks[f_envdec[1]] 
+      
+      ## 4.2. generate synchrony information finger deceleration and envelope attack
+      f_attdec          <- generatesyncinfo(attpeaks_time, f_decpeak_t, attpeaks_values)
+      
+      ## 4.3. generate synchrony information finger deceleration and F0
+      f_f0dec           <- generatesyncinfo(f0peaks_time, f_decpeak_t, f0peaks_values)
+      
+      ########### WRIST
+      #1 MOVEMENT COORDINATES
+      # if the movement is forward, take the maximum value,
+      if(unique(submf$movementdirection) == 'forward_movement'){w_movpeak <- max(submf$cntr_mov_w)}
+      if(unique(submf$movementdirection) == 'backward_movement'){w_movpeak <- min(submf$cntr_mov_w)}
+      
+      # if the movement is backward, take the minimum value
+      if(unique(submf$movementdirection) == 'forward_movement'){w_movpeak_t <- submf$time_ms[which.max(submf$cntr_mov_w)]}
+      if(unique(submf$movementdirection) == 'backward_movement'){w_movpeak_t <- submf$time_ms[which.min(submf$cntr_mov_w)]}
+      
+      ## 1.1. generate information for movement and envelope
+      w_envmov          <- generatesyncinfo(envpeaks_time, w_movpeak_t, envpeaks_values)
+      # what is the value of f0 when envpeak happens
+      wmov_f0_envpeak   <- F0_envpeaks[w_envmov[1]] 
+      
+      ## 1.2. generate information for movement and envelope attack
+      w_attmov          <- generatesyncinfo(attpeaks_time, w_movpeak_t, attpeaks_values)
+    
+      ## 1.3. generate information for movement and F0
+      w_f0mov           <- generatesyncinfo(f0peaks_time, w_movpeak_t, f0peaks_values)
+  
+      #2 VELOCITY
+      w_velpeak         <- max(submf$speed_wrist)
+      w_velpeak_t       <- submf$time_ms[which.max(submf$speed_wrist)]
+      
+      ## 2.1. generate information for velocity and envelope
+      w_envvel          <- generatesyncinfo(envpeaks_time, w_velpeak_t, envpeaks_values)
+      # what is the value of f0 when envpeak happens
+      wvel_f0_envpeak   <- F0_envpeaks[w_envvel[1]] 
+      
+      ## 2.2. generate information for velocity and envelope attack
+      w_attvel          <- generatesyncinfo(attpeaks_time, w_velpeak_t, attpeaks_values)
+      
+      ## 2.2. generate information for velocity and f0
+      w_f0vel           <- generatesyncinfo(f0peaks_time, w_velpeak_t, f0peaks_values)
+      
+      #3 ACCELERATION 
+      w_accpeak         <- max(submf$acc_wrist) 
+      w_accpeak_t       <- submf$time_ms[which.max(submf$acc_wrist)] 
+      
+      ## 3.1. generate information for acceleration and envelope 
+      w_envacc          <- generatesyncinfo(envpeaks_time, w_accpeak_t, envpeaks_values)
+      # what is the value of f0 in the env peak? (if 0, later omitted)
+      wacc_f0_envpeak   <- F0_envpeaks[w_envacc[1]] 
+      
+      ## 3.2. generate information for acceleration and envelope attack
+      w_attacc          <- generatesyncinfo(attpeaks_time, w_accpeak_t, attpeaks_values)
+      
+      ## 3.3. generate information for acceleration and F0
+      w_f0acc           <- generatesyncinfo(f0peaks_time, w_accpeak_t, f0peaks_values)
+     
+      #4 DECELERATION
+      w_decpeak         <- min(submf$acc_wrist) 
+      w_decpeak_t       <- submf$time_ms[which.min(submf$acc_wrist)]
+     
+      ## 4.1. generate information for deceleration and envelope
+      w_envdec          <- generatesyncinfo(envpeaks_time, w_decpeak_t, envpeaks_values)
+      # what is the value of f0 in the env peak? (if 0, later omitted)
+      wdec_f0_envpeak   <- F0_envpeaks[w_envdec[1]] 
+      
+      ## 4.2. generate information for deceleration and envelope attack
+      w_attdec          <- generatesyncinfo(attpeaks_time, w_decpeak_t, attpeaks_values)
+     
+      ## 4.3. generate information for deceleration and F0
+      w_f0dec           <- generatesyncinfo(f0peaks_time, w_decpeak_t, f0peaks_values)
+     
+      # METADATA
+      spkr              <- unique(submf$participant) # speaker
+      hnd               <- unique(submf$hand) # hand
+      sp_rt             <- unique(submf$speed_condition) # speed condition
+      drctn             <- unique(submf$movementdirection) # direction of movement
+      rhm               <- unique(submf$rhyme_name) # name of rhyme
+      syllab_env        <- submf$syllable[w_envacc[1]] # syllable in the envelope peak (later omitted those peaks with syllable = pause)
+    
+  ##########
+  ### save the observations for this iteration
+     
+      #### finger
+      ## naming convention: limb_peak
+      ## m = movement; env = envelope; att = attack; a/acc = acceleration; dec = deceleration; v/vel = velocity
+      
+      fing_mpeak                <- c(fing_mpeak, f_movpeak) 
+      fing_mpeak_time           <- c(fing_mpeak_time, f_movpeak_t) 
+      
+      fing_envpeak_m            <- c(fing_envpeak_m, f_envmov[2]) # indexed from the function results
+      fing_envpeak_m_time       <- c(fing_envpeak_m_time, f_envmov[3])
+      fing_movenv_sync          <- c(fing_movenv_sync, f_envmov[4])
+      fing_f0_movenvpeak        <- c(fing_f0_movenvpeak, fmov_f0_envpeak)
+
+      fing_attpeak_m            <- c(fing_attpeak_m, f_attmov[2]) 
+      fing_attpeak_m_time       <- c(fing_attpeak_m_time, f_attmov[3]) 
+      fing_movatt_sync          <- c(fing_movatt_sync, f_attmov[4]) 
+      
+      fing_f0peak_m             <- c(fing_f0peak_m, f_f0mov[2]) 
+      fing_f0peak_m_time        <- c(fing_f0peak_m_time, f_f0mov[3])
+      fing_movf0_sync           <- c(fing_movf0_sync, f_f0mov[4])
+      
+      fing_vpeak                <- c(fing_vpeak, f_velpeak)
+      fing_vpeak_time           <- c(fing_vpeak_time, f_velpeak_t)
+      
+      fing_envpeak_vel          <- c(fing_envpeak_vel, f_envvel[2])
+      fing_envpeak_vel_time     <- c(fing_envpeak_vel_time, f_envvel[3])
+      fing_velenv_sync          <- c(fing_velenv_sync, f_envvel[4])
+      fing_f0_velenvpeak        <- c(fing_f0_velenvpeak, fvel_f0_envpeak)
+      
+      fing_attpeak_vel          <- c(fing_attpeak_vel, f_attvel[2]) 
+      fing_attpeak_vel_time     <- c(fing_attpeak_vel_time, f_attvel[3]) 
+      fing_velatt_sync          <- c(fing_velatt_sync, f_attvel[4]) 
+      
+      fing_f0peak_vel           <- c(fing_f0peak_vel, f_f0vel[2]) 
+      fing_f0peak_vel_time      <- c(fing_f0peak_vel_time, f_f0vel[3]) 
+      fing_velf0_sync           <- c(fing_velf0_sync, f_f0vel[4])
+      
+      fing_apeak                <- c(fing_apeak, f_accpeak)
+      fing_apeak_time           <- c(fing_apeak_time, f_accpeak_t)
+      
+      fing_envpeak_acc          <- c(fing_envpeak_acc, f_envacc[2])
+      fing_envpeak_acc_time     <- c(fing_envpeak_acc_time, f_envacc[3])
+      fing_accenv_sync          <- c(fing_accenv_sync, f_envacc[4])
+      fing_f0_accenvpeak        <- c(fing_f0_accenvpeak, facc_f0_envpeak)
+      
+      fing_attpeak_acc          <- c(fing_attpeak_acc, f_attacc[2])
+      fing_attpeak_acc_time     <- c(fing_attpeak_acc_time, f_attacc[3])
+      fing_accatt_sync          <- c(fing_accatt_sync, f_attacc[4])
+
+      fing_f0peak_acc           <- c(fing_f0peak_acc, f_f0acc[2]) 
+      fing_f0peak_acc_time      <- c(fing_f0peak_acc_time, f_f0acc[3]) 
+      fing_accf0_sync           <- c(fing_accf0_sync, f_f0acc[4])
+      
+      fing_decpeak              <- c(fing_decpeak, f_decpeak)
+      fing_decpeak_time         <- c(fing_decpeak_time, f_decpeak_t)
+      
+      fing_envpeak_dec          <- c(fing_envpeak_dec, f_envdec[2])
+      fing_envpeak_dec_time     <- c(fing_envpeak_dec_time, f_envdec[3])
+      fing_decenv_sync          <- c(fing_decenv_sync, f_envdec[4])
+      fing_f0_decenvpeak        <- c(fing_f0_decenvpeak, fdec_f0_envpeak)
+      
+      fing_attpeak_dec          <- c(fing_attpeak_dec, f_attdec[2])
+      fing_attpeak_dec_time     <- c(fing_attpeak_dec_time, f_attdec[3])
+      fing_decatt_sync          <- c(fing_decatt_sync, f_attdec[4])
+      
+      fing_f0peak_dec           <- c(fing_f0peak_dec, f_f0dec[2]) 
+      fing_f0peak_dec_time      <- c(fing_f0peak_dec_time, f_f0dec[3]) 
+      fing_decf0_sync           <- c(fing_decf0_sync, f_f0dec[4])
+      
+      ### wrist
+      wrist_mpeak               <- c(wrist_mpeak, w_movpeak)
+      wrist_mpeak_time          <- c(wrist_mpeak_time, w_movpeak_t)
+      
+      wrist_envpeak_m           <- c(wrist_envpeak_m, w_envmov[2])
+      wrist_envpeak_m_time      <- c(wrist_envpeak_m_time, w_envmov[3])
+      wrist_movenv_sync         <- c(wrist_movenv_sync, w_envmov[4])
+      wrist_f0_movenvpeak       <- c(wrist_f0_movenvpeak, wmov_f0_envpeak)
+      
+      wrist_attpeak_m           <- c(wrist_attpeak_m, w_attmov[2]) 
+      wrist_attpeak_m_time      <- c(wrist_attpeak_m_time, w_attmov[3]) 
+      wrist_movatt_sync         <- c(wrist_movatt_sync, w_attmov[4]) 
+      
+      wrist_f0peak_m            <- c(wrist_f0peak_m, w_f0mov[2]) 
+      wrist_f0peak_m_time       <- c(wrist_f0peak_m_time, w_f0mov[3]) 
+      wrist_movf0_sync          <- c(wrist_movf0_sync, w_f0mov[4])
+      
+      wrist_vpeak               <- c(wrist_vpeak, w_velpeak)
+      wrist_vpeak_time          <- c(wrist_vpeak_time, w_velpeak_t)
+      
+      wrist_envpeak_vel         <- c(wrist_envpeak_vel, w_envvel[2])
+      wrist_envpeak_vel_time    <- c(wrist_envpeak_vel_time, w_envvel[3])
+      wrist_velenv_sync         <- c(wrist_velenv_sync, w_envvel[4])
+      wrist_f0_velenvpeak       <- c(wrist_f0_velenvpeak, wvel_f0_envpeak)
+      
+      wrist_attpeak_vel         <- c(wrist_attpeak_vel, w_attvel[2]) 
+      wrist_attpeak_vel_time    <- c(wrist_attpeak_vel_time, w_attvel[3]) 
+      wrist_velatt_sync         <- c(wrist_velatt_sync, w_attvel[4]) 
+      
+      wrist_f0peak_vel          <- c(wrist_f0peak_vel, w_f0vel[2]) 
+      wrist_f0peak_vel_time     <- c(wrist_f0peak_vel_time, w_f0vel[3]) 
+      wrist_velf0_sync          <- c(wrist_velf0_sync, w_f0vel[4])
+      
+      wrist_apeak               <- c(wrist_apeak, w_accpeak)
+      wrist_apeak_time          <- c(wrist_apeak_time, w_accpeak_t)
+      
+      wrist_envpeak_acc         <- c(wrist_envpeak_acc, w_envacc[2])
+      wrist_envpeak_acc_time    <- c(wrist_envpeak_acc_time, w_envacc[3])
+      wrist_accenv_sync         <- c(wrist_accenv_sync, w_envacc[4])
+      wrist_f0_accenvpeak       <- c(wrist_f0_accenvpeak, wacc_f0_envpeak) 
+      
+      wrist_attpeak_acc         <- c(wrist_attpeak_acc, w_attacc[2]) 
+      wrist_attpeak_acc_time    <- c(wrist_attpeak_acc_time, w_attacc[3]) 
+      wrist_accatt_sync         <- c(wrist_accatt_sync, w_attacc[4])
+      
+      wrist_f0peak_acc          <- c(wrist_f0peak_acc, w_f0acc[2]) 
+      wrist_f0peak_acc_time     <- c(wrist_f0peak_acc_time, w_f0acc[3]) 
+      wrist_accf0_sync          <- c(wrist_accf0_sync, w_f0acc[4]) 
+      
+      wrist_decpeak             <- c(wrist_decpeak, w_decpeak)
+      wrist_decpeak_time        <- c(wrist_decpeak_time, w_decpeak_t)
+      
+      wrist_envpeak_dec         <- c(wrist_envpeak_dec, w_envdec[2])
+      wrist_envpeak_dec_time    <- c(wrist_envpeak_dec_time, w_envdec[3])
+      wrist_decenv_sync         <- c(wrist_decenv_sync, w_envdec[4])
+      wrist_f0_decenvpeak       <- c(wrist_f0_decenvpeak, wdec_f0_envpeak) 
+      
+      wrist_attpeak_dec         <- c(wrist_attpeak_dec, w_attdec[2])
+      wrist_attpeak_dec_time    <- c(wrist_attpeak_dec_time, w_attdec[3])
+      wrist_decatt_sync         <- c(wrist_decatt_sync, w_attdec[4])
+      
+      wrist_f0peak_dec          <- c(wrist_f0peak_dec, w_f0dec[2]) 
+      wrist_f0peak_dec_time     <- c(wrist_f0peak_dec_time, w_f0dec[3]) 
+      wrist_decf0_sync          <- c(wrist_decf0_sync, w_f0dec[4])
+      
+      speaker                   <- c(speaker, spkr)
+      point_hand                <- c(point_hand, hnd)
+      sp_rate                   <- c(sp_rate, sp_rt)
+      point_direct              <- c(point_direct, drctn)
+      rhyme                     <- c(rhyme, rhm)
+      env_syllable              <- c(env_syllable, syllab_env)
+      env_syllable_num          <- c(env_syllable_num, syllab_env_num)
+      
+      
+    }
+  }
+}
+
+######### datasets #############
+## only finger
+
+dataset_kin_fing <- cbind.data.frame(speaker, point_hand, sp_rate, rhyme, env_syllable, point_direct, fing_mpeak, fing_mpeak_time, fing_envpeak_m, fing_envpeak_m_time, fing_movenv_sync, fing_f0_movenvpeak, fing_attpeak_m, fing_attpeak_m_time, fing_movatt_sync, fing_f0peak_m, fing_f0peak_m_time, fing_movf0_sync, fing_vpeak, fing_vpeak_time, fing_envpeak_vel, fing_envpeak_vel_time, fing_velenv_sync, fing_f0_velenvpeak, fing_attpeak_vel, fing_attpeak_vel_time, fing_velatt_sync, fing_f0peak_vel, fing_f0peak_vel_time,  fing_velf0_sync, fing_apeak, fing_apeak_time, fing_envpeak_acc, fing_envpeak_acc_time, fing_accenv_sync, fing_f0_accenvpeak, fing_attpeak_acc, fing_attpeak_acc_time, fing_accatt_sync, fing_f0peak_acc, fing_f0peak_acc_time, fing_accf0_sync, fing_decpeak, fing_decpeak_time, fing_envpeak_dec, fing_envpeak_dec_time, fing_decenv_sync, fing_f0_decenvpeak, fing_attpeak_dec, fing_attpeak_dec_time, fing_decatt_sync, fing_f0peak_dec, fing_f0peak_dec_time, fing_decf0_sync)
+
+## only wrist
+dataset_kin_wrist <- cbind.data.frame(speaker, point_hand, sp_rate, rhyme, env_syllable, point_direct, wrist_mpeak, wrist_mpeak_time, wrist_envpeak_m, wrist_envpeak_m_time, wrist_movenv_sync, wrist_f0_movenvpeak, wrist_attpeak_m, wrist_attpeak_m_time, wrist_movatt_sync, wrist_f0peak_m, wrist_f0peak_m_time, wrist_movf0_sync, wrist_vpeak, wrist_vpeak_time, wrist_envpeak_vel, wrist_envpeak_vel_time, wrist_velenv_sync, wrist_f0_velenvpeak, wrist_attpeak_vel, wrist_attpeak_vel_time, wrist_velatt_sync, wrist_f0peak_vel, wrist_f0peak_vel_time,  wrist_velf0_sync, wrist_apeak, wrist_apeak_time, wrist_envpeak_acc, wrist_envpeak_acc_time, wrist_accenv_sync, wrist_f0_accenvpeak, wrist_attpeak_acc, wrist_attpeak_acc_time, wrist_accatt_sync, wrist_f0peak_acc, wrist_f0peak_acc_time, wrist_accf0_sync, wrist_decpeak, wrist_decpeak_time, wrist_envpeak_dec, wrist_envpeak_dec_time, wrist_decenv_sync, wrist_f0_decenvpeak, wrist_attpeak_dec, wrist_attpeak_dec_time, wrist_decatt_sync, wrist_f0peak_dec, wrist_f0peak_dec_time, wrist_decf0_sync)
+
+## all together
+dataset_kin <- cbind.data.frame(speaker, point_hand, sp_rate, rhyme, env_syllable, point_direct, fing_mpeak, fing_mpeak_time, fing_envpeak_m, fing_envpeak_m_time, fing_movenv_sync, fing_f0_movenvpeak, fing_attpeak_m, fing_attpeak_m_time, fing_movatt_sync, fing_f0peak_m, fing_f0peak_m_time, fing_movf0_sync, fing_vpeak, fing_vpeak_time, fing_envpeak_vel, fing_envpeak_vel_time, fing_velenv_sync, fing_f0_velenvpeak, fing_attpeak_vel, fing_attpeak_vel_time, fing_velatt_sync, fing_f0peak_vel, fing_f0peak_vel_time,  fing_velf0_sync, fing_apeak, fing_apeak_time, fing_envpeak_acc, fing_envpeak_acc_time, fing_accenv_sync, fing_f0_accenvpeak, fing_attpeak_acc, fing_attpeak_acc_time, fing_accatt_sync, fing_f0peak_acc, fing_f0peak_acc_time, fing_accf0_sync, fing_decpeak, fing_decpeak_time, fing_envpeak_dec, fing_envpeak_dec_time, fing_decenv_sync, fing_f0_decenvpeak, fing_attpeak_dec, fing_attpeak_dec_time, fing_decatt_sync, fing_f0peak_dec, fing_f0peak_dec_time, fing_decf0_sync, wrist_mpeak, wrist_mpeak_time, wrist_envpeak_m, wrist_envpeak_m_time, wrist_movenv_sync, wrist_f0_movenvpeak, wrist_attpeak_m, wrist_attpeak_m_time, wrist_movatt_sync, wrist_f0peak_m, wrist_f0peak_m_time, wrist_movf0_sync, wrist_vpeak, wrist_vpeak_time, wrist_envpeak_vel, wrist_envpeak_vel_time, wrist_velenv_sync, wrist_f0_velenvpeak, wrist_attpeak_vel, wrist_attpeak_vel_time, wrist_velatt_sync, wrist_f0peak_vel, wrist_f0peak_vel_time,  wrist_velf0_sync, wrist_apeak, wrist_apeak_time, wrist_envpeak_acc, wrist_envpeak_acc_time, wrist_accenv_sync, wrist_f0_accenvpeak, wrist_attpeak_acc, wrist_attpeak_acc_time, wrist_accatt_sync, wrist_f0peak_acc, wrist_f0peak_acc_time, wrist_accf0_sync, wrist_decpeak, wrist_decpeak_time, wrist_envpeak_dec, wrist_envpeak_dec_time, wrist_decenv_sync, wrist_f0_decenvpeak, wrist_attpeak_dec, wrist_attpeak_dec_time, wrist_decatt_sync, wrist_f0peak_dec, wrist_f0peak_dec_time, wrist_decf0_sync)
+```
+
+For any wrist-related analysis, it is necessary to delete some trials, as some wrist markers were found to be hidden druing the trials
+
+```{r wrist cleaning dataset_kin, echo = TRUE, message=FALSE, warning = FALSE}
+
+### this cleans error from dataset_kin
+
+dataset_kin <- dataset_kin[!((dataset_kin$speaker == '11' & dataset_kin$sp_rate == "fast" & dataset_kin$point_hand == "_R" & dataset_kin$rhyme == "tre") | 
+            (dataset_kin$speaker == '2' & dataset_kin$sp_rate == "normal" & dataset_kin$point_hand == "_L" & dataset_kin$rhyme == "pan") | 
+            (dataset_kin$speaker == '2' & dataset_kin$sp_rate == "fast" & dataset_kin$point_hand == "_R" & dataset_kin$rhyme == "raz") |
+            (dataset_kin$speaker == '2' & dataset_kin$sp_rate == "fast" & dataset_kin$point_hand == "_R" & dataset_kin$rhyme == "tre") |
+            (dataset_kin$speaker == '2' & dataset_kin$sp_rate == "normal" & dataset_kin$point_hand == "_R" & dataset_kin$rhyme == "ent") |
+            (dataset_kin$speaker == '2' & dataset_kin$sp_rate == "normal" & dataset_kin$point_hand == "_R" & dataset_kin$rhyme == "pan") |
+            (dataset_kin$speaker == '2' & dataset_kin$sp_rate == "normal" & dataset_kin$point_hand == "_R" & dataset_kin$rhyme == "bzy") |
+            (dataset_kin$speaker == '2' & dataset_kin$sp_rate == "fast" & dataset_kin$point_hand == "_L" & dataset_kin$rhyme == "pan") |
+            (dataset_kin$speaker == '2' & dataset_kin$sp_rate == "normal" & dataset_kin$point_hand == "_R" & dataset_kin$rhyme == "wpa") |
+            (dataset_kin$speaker == '2' & dataset_kin$sp_rate == "normal" & dataset_kin$point_hand == "_R" & dataset_kin$rhyme == "tre") |
+            (dataset_kin$speaker == '3' & dataset_kin$sp_rate == "fast" & dataset_kin$point_hand == "_R" & dataset_kin$rhyme == "ent") |
+            (dataset_kin$speaker == '4' & dataset_kin$sp_rate == "fast" & dataset_kin$point_hand == "_L" & dataset_kin$rhyme == "bzy") |
+            (dataset_kin$speaker == '4' & dataset_kin$sp_rate == "fast" & dataset_kin$point_hand == "_L" & dataset_kin$rhyme == "wpa") |
+            (dataset_kin$speaker == '4' & dataset_kin$sp_rate == "fast" & dataset_kin$point_hand == "_L" & dataset_kin$rhyme == "pan") |
+            (dataset_kin$speaker == '4' & dataset_kin$sp_rate == "fast" & dataset_kin$point_hand == "_L" & dataset_kin$rhyme == "tre") |
+            (dataset_kin$speaker == '4' & dataset_kin$sp_rate == "normal" & dataset_kin$point_hand == "_L" & dataset_kin$rhyme == "ent") |
+            (dataset_kin$speaker == '4' & dataset_kin$sp_rate == "normal" & dataset_kin$point_hand == "_R" & dataset_kin$rhyme == "tre") |
+            (dataset_kin$speaker == '4' & dataset_kin$sp_rate == "fast" & dataset_kin$point_hand == "_R" & dataset_kin$rhyme == "ent") |
+            (dataset_kin$speaker == '8' & dataset_kin$sp_rate == "fast" & dataset_kin$point_hand == "_R" & dataset_kin$rhyme == "pan") |
+            (dataset_kin$speaker == '9' & dataset_kin$sp_rate == "normal" & dataset_kin$point_hand == "_R" & dataset_kin$rhyme == "raz")), ]
+
+```
+
+```{r wrist cleaning dataset_kin_wrist, echo = TRUE, message=FALSE, warning = FALSE}
+
+### this cleans error from dataset_kin_wrist
+
+dataset_kin_wrist <- dataset_kin_wrist[!((dataset_kin_wrist$speaker == '11' & dataset_kin_wrist$sp_rate == "fast" & dataset_kin_wrist$point_hand == "_R" & dataset_kin_wrist$rhyme == "tre") | 
+            (dataset_kin_wrist$speaker == '2' & dataset_kin_wrist$sp_rate == "normal" & dataset_kin_wrist$point_hand == "_L" & dataset_kin_wrist$rhyme == "pan") | 
+            (dataset_kin_wrist$speaker == '2' & dataset_kin_wrist$sp_rate == "fast" & dataset_kin_wrist$point_hand == "_R" & dataset_kin_wrist$rhyme == "raz") |
+            (dataset_kin_wrist$speaker == '2' & dataset_kin_wrist$sp_rate == "fast" & dataset_kin_wrist$point_hand == "_R" & dataset_kin_wrist$rhyme == "tre") |
+            (dataset_kin_wrist$speaker == '2' & dataset_kin_wrist$sp_rate == "normal" & dataset_kin_wrist$point_hand == "_R" & dataset_kin_wrist$rhyme == "ent") |
+            (dataset_kin_wrist$speaker == '2' & dataset_kin_wrist$sp_rate == "normal" & dataset_kin_wrist$point_hand == "_R" & dataset_kin_wrist$rhyme == "pan") |
+            (dataset_kin_wrist$speaker == '2' & dataset_kin_wrist$sp_rate == "normal" & dataset_kin_wrist$point_hand == "_R" & dataset_kin_wrist$rhyme == "bzy") |
+            (dataset_kin_wrist$speaker == '2' & dataset_kin_wrist$sp_rate == "fast" & dataset_kin_wrist$point_hand == "_L" & dataset_kin_wrist$rhyme == "pan") |
+            (dataset_kin_wrist$speaker == '2' & dataset_kin_wrist$sp_rate == "normal" & dataset_kin_wrist$point_hand == "_R" & dataset_kin_wrist$rhyme == "wpa") |
+            (dataset_kin_wrist$speaker == '2' & dataset_kin_wrist$sp_rate == "normal" & dataset_kin_wrist$point_hand == "_R" & dataset_kin_wrist$rhyme == "tre") |
+            (dataset_kin_wrist$speaker == '3' & dataset_kin_wrist$sp_rate == "fast" & dataset_kin_wrist$point_hand == "_R" & dataset_kin_wrist$rhyme == "ent") |
+            (dataset_kin_wrist$speaker == '4' & dataset_kin_wrist$sp_rate == "fast" & dataset_kin_wrist$point_hand == "_L" & dataset_kin_wrist$rhyme == "bzy") |
+            (dataset_kin_wrist$speaker == '4' & dataset_kin_wrist$sp_rate == "fast" & dataset_kin_wrist$point_hand == "_L" & dataset_kin_wrist$rhyme == "wpa") |
+            (dataset_kin_wrist$speaker == '4' & dataset_kin_wrist$sp_rate == "fast" & dataset_kin_wrist$point_hand == "_L" & dataset_kin_wrist$rhyme == "pan") |
+            (dataset_kin_wrist$speaker == '4' & dataset_kin_wrist$sp_rate == "fast" & dataset_kin_wrist$point_hand == "_L" & dataset_kin_wrist$rhyme == "tre") |
+            (dataset_kin_wrist$speaker == '4' & dataset_kin_wrist$sp_rate == "normal" & dataset_kin_wrist$point_hand == "_L" & dataset_kin_wrist$rhyme == "ent") |
+            (dataset_kin_wrist$speaker == '4' & dataset_kin_wrist$sp_rate == "normal" & dataset_kin_wrist$point_hand == "_R" & dataset_kin_wrist$rhyme == "tre") |
+            (dataset_kin_wrist$speaker == '4' & dataset_kin_wrist$sp_rate == "fast" & dataset_kin_wrist$point_hand == "_R" & dataset_kin_wrist$rhyme == "ent") |
+            (dataset_kin_wrist$speaker == '8' & dataset_kin_wrist$sp_rate == "fast" & dataset_kin_wrist$point_hand == "_R" & dataset_kin_wrist$rhyme == "pan") |
+            (dataset_kin_wrist$speaker == '9' & dataset_kin_wrist$sp_rate == "normal" & dataset_kin_wrist$point_hand == "_R" & dataset_kin_wrist$rhyme == "raz")), ]
+
+```
+
+You could save it like so
+```{r save datasets kinematics and peaks for finger and wrist, echo = TRUE, message=FALSE, warning = FALSE}
+
+write.csv(dataset_kin, paste0(datasets, "dataset_kin.csv"), row.names = FALSE)
+write.csv(dataset_kin_fing, paste0(datasets, "dataset_kin_fing.csv"), row.names = FALSE)
+write.csv(dataset_kin_wrist, paste0(datasets, "dataset_kin_wrist.csv"), row.names = FALSE)
+
+```
+
+## Time series dataset
+
+Next two chunks generate data for the whole **time series**. They are useful mainly for plotting. 
+
+### Time series: movement
+```{r dataset time series movement, echo = TRUE, message=FALSE, warning = FALSE}
+
+########## variables ###############
+# these are the variables that we want to have in a dataset
+
+time_ms <- ts_time <- fing <- fing_a <- wrist <- wrist_a <- elbow <- elbow_a <- envelope <- m_fing <- a_fing <- m_wrist <- a_wrist <- m_elb <- a_elb <- env <- env_att <- attack <- f0 <- freq <- syll_num <- syllable_num <- numeric()
+
+participant <- hand <- rhyme <- rate <- speaker <- point_hand <- rhyme_name <- speech_rate <- speech <- is_speech <- syll <- syllable <- character()
+
+########## collecting datapoints ############
+
+## looping over individual files
+
+merged_files <- list.files(datamerged, pattern = "*.csv") # link it to the files from the environment
+
+for(f in merged_files){
+  mf <- read.csv(paste0(datamerged, f))
+  mf$condition_speech <- as.factor(mf$condition_speech)
+
+  if(unique(mf$condition_speech) == "motion_speech"){ # we only want timeseries from movement condition
+    
+    # Collect one value for this iteration
+                          
+      fing          <- mf$z_fing # z-dimension of finger movement
+      fing_a        <- mf$acc_fing # acceleration
+      wrist         <- mf$z_wrist # z-dimension of wrist movement
+      wrist_a       <- mf$acc_wrist # acceleration
+      elbow         <- mf$z_elb # z-dimension of elbow movement
+      elbow_a       <- mf$acc_elb
+      envelope      <- mf$env # amplitude envelope
+      attack        <- c(0, diff(mf$env)) # envelope attack (slope)
+      freq          <- mf$F0 # fundamental frequency
+      
+      # metadata
+      participant   <- mf$participant 
+      hand          <- mf$hand
+      rhyme         <- mf$rhyme_name
+      rate          <- mf$speed_condition
+      speech        <- mf$speech
+      ts_time       <- mf$time_ms
+      syll          <- mf$syllable
+      syll_num      <- mf$syllable_num
+      
+      ######## filling up ##############
+      # fill up the observations for this iteration
+      m_fing            <- c(m_fing, fing)
+      a_fing            <- c(a_fing, fing_a)
+      m_wrist           <- c(m_wrist, wrist)
+      a_wrist           <- c(a_wrist, wrist_a)
+      m_elb             <- c(m_elb, elbow)
+      a_elb             <- c(a_elb, elbow_a)
+      env               <- c(env, envelope)
+      env_att           <- c(env_att, attack)
+      f0                <- c(f0, freq)
+      speaker           <- c(speaker, participant)
+      point_hand        <- c(point_hand, hand)
+      rhyme_name        <- c(rhyme_name, rhyme)
+      speech_rate       <- c(speech_rate, rate)
+      is_speech         <- c(is_speech, speech)
+      time_ms           <- c(time_ms, ts_time)
+      syllable          <- c(syllable, syll)
+      syllable_num      <- c(syllable_num, syll_num)
+      
+}}
+  
+############## datasets #############    
+#this is a dataset containing time_series of all trials
+
+dataset_ts <- cbind.data.frame(speaker, rhyme_name, syllable, syllable_num, point_hand, speech_rate, time_ms, m_fing, a_fing, m_wrist, a_wrist, m_elb, a_elb, env, env_att, f0, is_speech)
+
+dataset_ts <- subset(dataset_ts, is_speech == "ongoing speech") # keep only timeseries within ongoing speech
+
+```
+
+Delete the error trials again
+```{r dataset_ts wrist cleaning, echo = TRUE, message=FALSE, warning = FALSE}
+
+dataset_ts <- dataset_ts[!((dataset_ts$speaker == '11' & dataset_ts$speech_rate == "fast" & dataset_ts$point_hand == "_R" & dataset_ts$rhyme_name == "tre") | 
+            (dataset_ts$speaker == '2' & dataset_ts$speech_rate == "normal" & dataset_ts$point_hand == "_L" & dataset_ts$rhyme_name == "pan") | 
+            (dataset_ts$speaker == '2' & dataset_ts$speech_rate == "fast" & dataset_ts$point_hand == "_R" & dataset_ts$rhyme_name == "raz") |
+            (dataset_ts$speaker == '2' & dataset_ts$speech_rate == "fast" & dataset_ts$point_hand == "_R" & dataset_ts$rhyme_name == "tre") |
+            (dataset_ts$speaker == '2' & dataset_ts$speech_rate == "normal" & dataset_ts$point_hand == "_R" & dataset_ts$rhyme_name == "ent") |
+            (dataset_ts$speaker == '2' & dataset_ts$speech_rate == "normal" & dataset_ts$point_hand == "_R" & dataset_ts$rhyme_name == "pan") |
+            (dataset_ts$speaker == '2' & dataset_ts$speech_rate == "normal" & dataset_ts$point_hand == "_R" & dataset_ts$rhyme_name == "bzy") |
+            (dataset_ts$speaker == '2' & dataset_ts$speech_rate == "fast" & dataset_ts$point_hand == "_L" & dataset_ts$rhyme_name == "pan") |
+            (dataset_ts$speaker == '2' & dataset_ts$speech_rate == "normal" & dataset_ts$point_hand == "_R" & dataset_ts$rhyme_name == "wpa") |
+            (dataset_ts$speaker == '2' & dataset_ts$speech_rate == "normal" & dataset_ts$point_hand == "_R" & dataset_ts$rhyme_name == "tre") |
+            (dataset_ts$speaker == '3' & dataset_ts$speech_rate == "fast" & dataset_ts$point_hand == "_R" & dataset_ts$rhyme_name == "ent") |
+            (dataset_ts$speaker == '4' & dataset_ts$speech_rate == "fast" & dataset_ts$point_hand == "_L" & dataset_ts$rhyme_name == "bzy") |
+            (dataset_ts$speaker == '4' & dataset_ts$speech_rate == "fast" & dataset_ts$point_hand == "_L" & dataset_ts$rhyme_name == "wpa") |
+            (dataset_ts$speaker == '4' & dataset_ts$speech_rate == "fast" & dataset_ts$point_hand == "_L" & dataset_ts$rhyme_name == "pan") |
+            (dataset_ts$speaker == '4' & dataset_ts$speech_rate == "fast" & dataset_ts$point_hand == "_L" & dataset_ts$rhyme_name == "tre") |
+            (dataset_ts$speaker == '4' & dataset_ts$speech_rate == "normal" & dataset_ts$point_hand == "_L" & dataset_ts$rhyme_name == "ent") |
+            (dataset_ts$speaker == '4' & dataset_ts$speech_rate == "normal" & dataset_ts$point_hand == "_R" & dataset_ts$rhyme_name == "tre") |
+            (dataset_ts$speaker == '4' & dataset_ts$speech_rate == "fast" & dataset_ts$point_hand == "_R" & dataset_ts$rhyme_name == "ent") |
+            (dataset_ts$speaker == '8' & dataset_ts$speech_rate == "fast" & dataset_ts$point_hand == "_R" & dataset_ts$rhyme_name == "pan") |
+            (dataset_ts$speaker == '9' & dataset_ts$speech_rate == "normal" & dataset_ts$point_hand == "_R" & dataset_ts$rhyme_name == "raz")), ]
+
+```
+
+You can save it
+```{r save time series, echo = TRUE, message=FALSE, warning = FALSE}
+
+write.csv(dataset_ts, paste0(datasets, "dataset_ts.csv"), row.names = FALSE)
+
+```
+
+
+### Time series: reading condition
+```{r time series for reading, echo = TRUE, message=FALSE, warning = FALSE}
+
+########### variables #############
+# these are the variables that we want to have in a dataset
+
+time_ms <- ts_time <- envelope <- env <- env_att <- attack <- f0 <- freq <- syll_num <- syllable_num <- numeric()
+
+participant <- rhyme <- speaker <- rhyme_name <- syll <- syllable <- character()
+
+############## collecting datapoints ##############
+## looping over individual files
+
+merged_files <- list.files(datamerged, pattern = "*.csv") # link to the files in the environment
+
+for(f in merged_files){
+  mf <- read.csv(paste0(datamerged, f))
+  mf$condition_speech <- as.factor(mf$condition_speech)
+
+  if(unique(mf$condition_speech) == "lesen"){ # now we are interested only in reading condition
+    
+    # Collect one value for this iteration
+     
+      envelope      <- mf$env # amplitude envelope
+      attack        <- c(0, diff(mf$env)) # envelope attack (slope)
+      freq          <- mf$F0 # fundamental frequency
+      
+      # metadata
+      participant   <- mf$participant 
+      rhyme         <- mf$rhyme_name
+      ts_time       <- mf$time_ms
+      syll          <- mf$syllable
+      syll_num      <- mf$syllable_num
+      
+      ########## filling up ############
+      #fill up the observations for this iteration
+      env               <- c(env, envelope)
+      env_att           <- c(env_att, attack)
+      f0                <- c(f0, freq)
+      speaker           <- c(speaker, participant)
+      rhyme_name        <- c(rhyme_name, rhyme)
+      time_ms           <- c(time_ms, ts_time)
+      syllable          <- c(syllable, syll)
+      syllable_num      <- c(syllable_num, syll_num)
+   
+  }}
+
+########### datasets #############
+      
+#this is a dataset containing time_series of all trials
+
+dataset_ts_lesen <- cbind.data.frame(speaker, rhyme_name, time_ms, syllable, syllable_num, env, env_att, f0)
+
+# You can save the dataset to a CSV file
+write.csv(dataset_ts_lesen, paste0(datasets, "dataset_ts_lesen.csv"), row.names = FALSE)
+
+```
