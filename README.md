@@ -18,7 +18,7 @@ The movement of the participants was tracked with twelve Optitrack 13 motion cap
 The study was designed to investigate speech-gesture coordination in a relatively natural setting. Motion conditions were varied to better understand their effect on speech. The data was originally collected by Katarzyna Stoltmann and Susanne Fuchs.
 Authors: Šárka Kadavá, Aleksandra Cwiek, Katarzyna Stoltmann, Susanne Fuchs, Wim Pouw
 
-Folders:
+## Folder structure
 
 **1_primary_data_to_be_processed**
 >- motion data converted from C3D motion files into csv files
@@ -65,4 +65,5 @@ Folders:
 **11_postpring**
 >- this folder contains the manuscript as well as corrigendum
 
-How to cite: Kadavá, Š., Ćwiek, A., Fuchs, S. and Pouw, W. (2023) Is gesture-speech physics at work in rhythmic pointing? Evidence from Polish counting-out rhymes. Proceedings of the 20th International Congress of Phonetic Sciences (ICPhS), Prague, 7-8 August 2023.
+## How to cite
+Kadavá, Š., Ćwiek, A., Fuchs, S. and Pouw, W. (2023) Is gesture-speech physics at work in rhythmic pointing? Evidence from Polish counting-out rhymes. Proceedings of the 20th International Congress of Phonetic Sciences (ICPhS), Prague, 7-8 August 2023.
