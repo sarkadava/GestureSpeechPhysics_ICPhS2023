@@ -63,4 +63,6 @@ Folders:
 >- this folder contains all plots
 
 **11_postpring**
->- this folder contains the manuscript
+>- this folder contains the manuscript as well as corrigendum
+
+How to cite: Kadavá, Š., Ćwiek, A., Fuchs, S. and Pouw, W. (2023) Is gesture-speech physics at work in rhythmic pointing? Evidence from Polish counting-out rhymes. Proceedings of the 20th International Congress of Phonetic Sciences (ICPhS), Prague, 7-8 August 2023.
